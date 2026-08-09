@@ -1,0 +1,22 @@
+# Example Phase 1.5 configuration. Environment placeholders are resolved by
+# the shell before invoking oaieval; this YAML is documentation/configuration
+# metadata and is not parsed by the retained evals CLI.
+dataset:
+  id: medical-medqa.dev.v1
+  path: evals/registry/data/medical_medqa/samples.jsonl
+  split: dev
+
+eval:
+  id: medical-medqa.dev.v1
+
+model:
+  provider: openai-compatible
+  model: ${OPENAI_MODEL}
+  base_url: ${OPENAI_BASE_URL}
+
+completion_fn:
+  id: medical-openai-compatible
+
+runner:
+  max_samples: 1
+  local_run: true
