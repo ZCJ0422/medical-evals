@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "medical-evals"
 version = "3.0.1.post1"
 description = "Medical LLM Evaluation Framework based on OpenAI Evals"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 readme = "README.md"
 dependencies = [
     "evals @ git+https://github.com/openai/evals.git@8eac7a7de5215c907fbddc30efdaf316913eccdd",
