@@ -55,6 +55,12 @@ cd medical-evals
 Use a regular `git clone` instead if you need to inspect the complete commit
 history.
 
+Detailed technical documentation:
+
+- [Project technical documentation](docs/project-technical.md)
+- [MedQA technical documentation](docs/medqa-technical.md)
+- [HealthBench technical documentation](docs/healthbench-technical.md)
+
 The project uses `uv` for environment and lockfile management:
 
 ```bash
