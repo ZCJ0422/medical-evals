@@ -38,7 +38,7 @@ sample_score = achieved / positive_max
 - `medical_evals/judges/rubric.py`：Judge 协议、JSON 结果解析与 prompt 构造。
 - `medical_evals/metrics/healthbench.py`：单题、总体和 tag 加权聚合。
 - `medical_evals/evals/healthbench.py`：编排模型、Judge、Recorder 与 final report。
-- `evals/registry/data/medical_healthbench/`：两条 smoke 样本；完整数据仍由配置路径引用仓库根目录文件。
+- `registry/data/medical_healthbench/`：两条 smoke 样本；完整数据仍由配置路径引用仓库根目录文件。
 
 被测模型和 Judge 均通过现有 CompletionFn 接入。Judge 解析失败的 rubric 记为未满足并记录错误，不中断整条评测。
 

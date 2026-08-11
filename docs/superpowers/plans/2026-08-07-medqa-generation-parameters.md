@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Do not modify `evals/` core logic.
+- Do not modify the external `evals` dependency.
 - Do not change the MedQA dataset or add dependencies.
 - Do not call a real model from tests.
 - Preserve sampling ownership in the Adapter and match ownership in `MedQAEval`.
@@ -20,7 +20,7 @@
 **Files:**
 - Modify: `tests/medical_evals/test_medqa_eval.py`
 - Modify: `medical_evals/evals/medqa.py`
-- Modify: `evals/registry/evals/medical_medqa.yaml`
+- Modify: `registry/evals/medical_medqa.yaml`
 - Modify: `tests/integration/test_medqa_pipeline.py`
 
 **Interfaces:**
@@ -87,7 +87,7 @@ OPENAI_API_KEY=dummy python -m pytest -q tests/medical_evals/test_choice_parser.
 Run:
 
 ```bash
-OPENAI_API_KEY=dummy python -m pytest -q tests tests/unit/evals
+OPENAI_API_KEY=dummy python -m pytest -q tests
 ```
 
 Expected result: all existing tests pass.

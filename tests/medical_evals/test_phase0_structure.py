@@ -30,9 +30,7 @@ def test_medical_evals_extension_packages_are_importable():
 
 def test_phase05_repository_directories_exist():
     expected_directories = [
-        "evals",
         "medical_evals",
-        "tests/evals",
         "tests/medical_evals",
         "tests/adapters",
         "tests/metrics",
@@ -44,7 +42,6 @@ def test_phase05_repository_directories_exist():
         "experiments/configs",
         "experiments/runs",
         "experiments/snapshots",
-        "scripts",
         "docs",
     ]
 

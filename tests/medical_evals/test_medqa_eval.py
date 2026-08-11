@@ -223,7 +223,7 @@ def test_medqa_eval_forwards_configured_generation_parameters(tmp_path, monkeypa
 
 
 def test_registry_loads_medqa_eval_spec():
-    registry = Registry([Path("evals/registry")])
+    registry = Registry([Path("registry")])
 
     spec = registry.get_eval("medical-medqa.dev.v1")
 

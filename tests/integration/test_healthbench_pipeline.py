@@ -52,7 +52,7 @@ def make_recorder():
 
 
 def test_registry_loads_healthbench_specs():
-    registry = Registry([Path("evals/registry")])
+    registry = Registry([Path("registry")])
     for name in (
         "medical-healthbench.smoke.v1",
         "medical-healthbench.oss.v1",
@@ -79,10 +79,10 @@ def test_healthbench_pipeline_generates_and_judges_smoke_samples(monkeypatch):
     )
     target = OpenAICompatibleCompletionFn(model="target-model", client=target_client, max_retries=0)
     judge = OpenAICompatibleCompletionFn(model="judge-model", client=judge_client, max_retries=0)
-    registry = Registry([Path("evals/registry")])
+    registry = Registry([Path("registry")])
     evaluation = HealthBenchEval(
         completion_fns=[target],
-        eval_registry_path=Path("evals/registry"),
+        eval_registry_path=Path("registry"),
         registry=registry,
         name="medical-healthbench.smoke.v1",
         samples_jsonl="medical_healthbench/smoke.jsonl",

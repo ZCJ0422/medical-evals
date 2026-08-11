@@ -12,8 +12,9 @@ This file records third-party software and data provenance for
 
 ## Python dependencies
 
-The retained evals dependency set is declared in `pyproject.toml` and locked
-in `uv.lock`. Each dependency remains subject to its own license and terms.
+The external evals dependency and its transitive dependency set are declared
+in `pyproject.toml` and locked in `uv.lock`. Each dependency remains subject
+to its own license and terms.
 The dependency inventory should be reviewed before any commercial release.
 
 ## Datasets

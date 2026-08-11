@@ -112,7 +112,7 @@ def test_medqa_pipeline_records_one_sampling_and_one_match(tmp_path, monkeypatch
 
 
 def test_registry_loads_medqa_pipeline_definition():
-    registry = Registry([Path("evals/registry")])
+    registry = Registry([Path("registry")])
 
     spec = registry.get_eval("medical-medqa.dev.v1")
 
@@ -122,20 +122,13 @@ def test_registry_loads_medqa_pipeline_definition():
     assert eval_factory.func is MedQAEval
 
 
-def test_default_run_paths_include_eval_model_and_run_id(tmp_path):
-    record_path, log_path = oaieval.default_run_paths(
-        "medical-medqa.dev.v1",
-        "MiniMax-M3",
-        "260807075935BR53HO76",
-        root=tmp_path,
+def test_external_cli_exposes_project_registry_option():
+    parser = oaieval.get_parser()
+    args = parser.parse_args(
+        ["medical-openai-compatible", "medical-medqa.dev.v1", "--registry_path", "registry"]
     )
 
-    assert record_path == str(
-        tmp_path / "medical-medqa.dev.v1__MiniMax-M3__260807075935BR53HO76.jsonl"
-    )
-    assert log_path == str(
-        tmp_path / "medical-medqa.dev.v1__MiniMax-M3__260807075935BR53HO76.log"
-    )
+    assert args.registry_path == ["registry"]
 
 
 def test_oaieval_runner_loads_registered_completion_fn(tmp_path, monkeypatch):
@@ -177,7 +170,7 @@ def test_oaieval_runner_loads_registered_completion_fn(tmp_path, monkeypatch):
 
     previous_max_samples = eval_module._MAX_SAMPLES
     try:
-        run_id = oaieval.run(args, registry=Registry([Path("evals/registry")]))
+        run_id = oaieval.run(args, registry=Registry([Path("registry")]))
     finally:
         eval_module.set_max_samples(previous_max_samples)
 

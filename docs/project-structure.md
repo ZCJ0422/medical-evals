@@ -6,7 +6,7 @@
 
 `medical-evals` 是构建在 OpenAI Evals 执行引擎之上的医学大模型评测扩展层。项目当前同时包含：
 
-1. 保留的通用 Evals 执行引擎，用于调度、模型调用、Recorder、Registry 和 CLI；
+1. 外部固定版本的 OpenAI Evals 执行引擎，用于调度、模型调用、Recorder、Registry 和 CLI；
 2. 医学领域扩展，用于 MedQA、HealthBench、医学数据加载、医学指标和 rubric Judge；
 3. Registry 配置、测试、运行记录和设计文档。
 
@@ -26,16 +26,12 @@ OpenAI-compatible API / OpenAI API / 本地服务 / Agent 适配器
 
 ```text
 medical-evals/
-├── evals/                    # 通用 Evals 执行引擎
 ├── medical_evals/            # 医学领域扩展层
-├── evals/registry/           # 当前 CLI 使用的 Registry
-├── registry/                 # 医学领域 Registry 的预留目录
+├── registry/                 # 当前 CLI 使用的项目 Registry
 ├── tests/                    # 单元、集成和领域测试
 ├── docs/                     # 使用文档、设计文档和实现计划
 ├── configs/                  # 可复用的运行配置示例
 ├── experiments/              # 运行配置、运行记录和快照目录
-├── examples/                 # 通用 Evals 示例 Notebook
-├── scripts/                  # Evals 生成器和运维脚本
 ├── .github/                 # CI、Issue 模板和工作流
 ├── pyproject.toml            # Python 包、依赖、CLI 和 pytest 配置
 ├── uv.lock                  # 依赖锁定文件
@@ -45,30 +41,13 @@ medical-evals/
 
 ## 3. 核心源码目录
 
-### 3.1 `evals/`：通用执行引擎
+### 3.1 外部 `evals`：通用执行引擎
 
-这是项目依赖的通用评测运行时，保留 OpenAI Evals 的主要抽象。它不是医学业务代码，但医学评测依赖它的执行能力。
+这是通过 `pyproject.toml` 固定到 OpenAI Evals commit 的外部运行时依赖。它不再复制到本仓库，因此安装后由 Python 环境提供 `evals` 包。
 
-```text
-evals/
-├── api.py                   # CompletionFn、CompletionResult 等协议
-├── base.py                  # RunSpec、EvalSpec 等基础数据结构
-├── data.py                  # JSONL 和通用数据读取
-├── eval.py                  # Eval 基类、样本调度和并发执行
-├── record.py                # Recorder、Event 和记录辅助函数
-├── registry.py              # Registry 解析、类加载和 CompletionFn 创建
-├── metrics.py               # 通用指标
-├── cli/
-│   ├── oaieval.py           # 单个 Eval 的 CLI
-│   └── oaievalset.py        # Eval set 的 CLI
-├── completion_fns/          # 通用 CompletionFn 实现
-├── solvers/                 # Solver 抽象及供应商实现
-├── prompt/                  # Prompt 类型和格式化
-├── utils/                   # 通用工具
-└── elsuite/                 # 保留的通用评测任务集合
-```
+官方 `evals` 包的源码结构由外部依赖管理；本仓库只在代码中通过公开接口导入它，不复制其源码、测试、示例或通用 Registry。
 
-`evals/elsuite/` 包含大量原有通用任务，例如基础匹配、翻译、模型分级、工具调用和对话任务。这些任务不是医学评测，但属于保留的通用执行引擎内容；除非明确决定不再兼容通用 Evals，否则不应随意删除。
+通用任务、CLI、Recorder、CompletionFn 和 Registry 实现由外部依赖提供。本仓库只维护医学扩展和医学所需的 Registry 配置。
 
 ### 3.2 `medical_evals/`：医学评测扩展
 
@@ -114,7 +93,7 @@ medical_evals/
 - `medical_evals/evals/medqa.py`
 - `medical_evals/graders/choice_parser.py`
 - `medical_evals/metrics/medical_qa.py`
-- `evals/registry/evals/medical_medqa.yaml`
+- `registry/evals/medical_medqa.yaml`
 
 流程：
 
@@ -140,8 +119,8 @@ Registry ID：`medical-medqa.dev.v1`。
 - `medical_evals/evals/healthbench.py`
 - `medical_evals/judges/rubric.py`
 - `medical_evals/metrics/healthbench.py`
-- `evals/registry/evals/medical_healthbench.yaml`
-- `evals/registry/data/medical_healthbench/smoke.jsonl`
+- `registry/evals/medical_healthbench.yaml`
+- `registry/data/medical_healthbench/smoke.jsonl`
 
 流程：
 
@@ -184,10 +163,10 @@ Registry 中的完整数据路径通过相对路径引用；smoke 数据则保�
 
 ## 5. Registry 结构
 
-当前真正被 CLI 使用的是：
+当前项目真正被 CLI 使用的是：
 
 ```text
-evals/registry/
+registry/
 ├── completion_fns/            # CompletionFn 注册
 ├── data/                      # 注册数据和 smoke 数据
 ├── evals/                     # Eval 与 Eval set 定义
@@ -196,12 +175,12 @@ evals/registry/
 └── solvers/                   # Solver 注册
 ```
 
-医学评测配置位于 `evals/registry/evals/`，例如：
+医学评测配置位于 `registry/evals/`，例如：
 
 - `medical_medqa.yaml`
 - `medical_healthbench.yaml`
 
-根目录的 `registry/` 目前只有目录占位文件，是未来医学领域独立 Registry 层的预留位置。不要把当前可运行的 YAML 配置误放到该目录，除非同时修改 Registry 加载逻辑。
+运行项目评测时需要显式传入 `--registry_path ./registry`，因为外部 `evals` 默认只加载它自身的 Registry。
 
 ## 6. 数据与运行产物
 
@@ -217,13 +196,22 @@ HealthBench 完整数据当前由工作区根目录的 `dataset/HealthBench/` �
 
 ### 6.2 运行结果
 
-`experiments/` 用于保存实验配置、运行记录和快照：
+`experiments/` 用于保存实验配置、显式指定路径的运行记录和快照：
 
 ```text
 experiments/
 ├── configs/                  # 实验配置
 ├── runs/                     # 本地运行输出
 └── snapshots/                # 数据或配置快照
+```
+
+如果不指定 `--record_path`，外部 Evals CLI 默认将结果写入
+`/tmp/evallogs/{run_id}_{completion_fn}_{eval}.jsonl`；如果不指定
+`--log_to_file`，日志输出到终端。需要纳入实验目录时，显式传入：
+
+```bash
+--record_path ./experiments/runs/healthbench-smoke.jsonl \
+--log_to_file ./experiments/runs/healthbench-smoke.log
 ```
 
 模型输出和日志默认不纳入 Git，相关规则位于 `.gitignore`。这些文件可能包含大量回答、提示词或敏感信息，应按实验需要保留、归档或清理。
@@ -233,7 +221,6 @@ experiments/
 ```text
 tests/
 ├── adapters/                 # API 适配器测试
-├── evals/                    # 通用 Eval 相关测试
 ├── integration/              # 端到端流水线测试
 ├── medical_evals/            # 医学数据、Eval、解析器和元数据测试
 ├── metrics/                  # 医学指标测试
@@ -313,7 +300,7 @@ __pycache__/
 2. 在 `medical_evals/metrics/` 中先实现纯指标和边界测试；
 3. 在 `medical_evals/judges/` 中定义外部 Judge 的结构化协议；
 4. 在 `medical_evals/evals/` 中编排模型、Judge 和 Recorder；
-5. 在 `evals/registry/evals/` 注册可运行 ID；
+5. 在 `registry/evals/` 注册可运行 ID；
 6. 为每个新 Eval 添加单元测试和 smoke 集成测试；
 7. 更新 `README.md` 或 `docs/run-evals.md`；
 8. 删除构建缓存和本地输出前，确认它们不包含需要归档的实验结果；
@@ -323,12 +310,12 @@ __pycache__/
 
 ### 应继续保留
 
-- `evals/` 通用执行引擎，因为医学层依赖它；
+- 外部 `evals` 通用执行引擎，因为医学层依赖它；
 - `medical_evals/` 医学评测实现；
-- `evals/registry/` 当前运行配置；
+- `registry/` 当前运行配置；
 - `tests/` 与现有评测对应的测试；
 - `docs/` 中仍与当前架构一致的设计和运行文档；
-- `examples/` 中用于理解通用 Evals 接口的示例。
+- `pyproject.toml` 和 `uv.lock` 中的外部依赖固定信息。
 
 ### 不应直接提交
 
@@ -340,9 +327,9 @@ __pycache__/
 
 ### 后续可单独评估
 
-- 是否仍需保留全部 `evals/elsuite/` 通用任务；
+- 是否增加更多医学领域 Registry 配置和数据版本；
 - 是否将通用 Evals 引擎拆成独立依赖，而不是继续放在仓库中；
-- 是否归档 `examples/` 中与医学评测无关的 Notebook；
+- 是否增加更多医学领域 Registry 配置；
 - 是否把完整 HealthBench 数据纳入独立数据版本管理，而不是通过工作区相对路径引用。
 
 这些事项会改变项目边界或复现方式，不应在一次普通清理中直接删除。

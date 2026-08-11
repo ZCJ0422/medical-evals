@@ -7,13 +7,6 @@ on top of the OpenAI Evals execution engine.
 
 ```text
 medical-evals/
-├── evals/                         # General-purpose evaluation engine
-│   ├── Eval
-│   ├── CompletionFn
-│   ├── Recorder
-│   ├── Registry
-│   ├── CLI Runner
-│   └── base metrics
 ├── medical_evals/                 # Medical-domain extension layer
 │   ├── datasets
 │   ├── evals
@@ -24,7 +17,7 @@ medical-evals/
 │   ├── reports
 │   ├── models
 │   └── human
-├── registry/                       # Configuration registry
+├── registry/                       # Project-owned configuration registry
 │   ├── evals
 │   ├── datasets
 │   ├── models
@@ -34,21 +27,20 @@ medical-evals/
 │   ├── runs
 │   └── snapshots
 ├── tests/                          # Unit and integration tests
-├── scripts/                        # Operational and maintenance scripts
 └── docs/                           # Project documentation
 ```
 
 Directory responsibilities are intentionally separated:
 
-- `evals/`: general-purpose evaluation engine, including Eval, CompletionFn,
-  Recorder, Registry loading, metrics, and the CLI runner.
+- `evals`: the pinned external OpenAI Evals runtime dependency, including Eval,
+  CompletionFn, Recorder, Registry loading, metrics, and the CLI runner. It is
+  intentionally not vendored into this repository.
 - `medical_evals/`: medical-domain extension layer.
-- `registry/`: versioned configuration registration for evaluations, datasets,
-  models, and judges. This is separate from `evals/registry/`, which belongs to
-  the retained evaluation engine.
+- `registry/`: versioned configuration registration for this project’s
+  evaluations, datasets, models, and judges. Pass it to the OpenAI Evals CLI
+  with `--registry_path ./registry`.
 - `experiments/`: experiment configurations, run records, and snapshots.
 - `tests/`: unit, package, adapter, metric, and integration test organization.
-- `scripts/`: future data-processing, benchmarking, and release utilities.
 - `docs/`: project and framework documentation.
 
 ## Development
@@ -60,7 +52,7 @@ uv sync
 uv run pytest
 ```
 
-The retained evals CLI remains available as:
+The external OpenAI Evals CLI remains available as:
 
 ```bash
 uv run oaieval --help
@@ -78,6 +70,7 @@ export OPENAI_BASE_URL="https://example.com/v1"
 export OPENAI_MODEL="your-model"
 
 uv run oaieval medical-openai-compatible medical-medqa.dev.v1 \
+  --registry_path ./registry \
   --max_samples 1 \
   --extra_eval_params temperature=0.1,max_tokens=2048 \
   --local-run \
@@ -88,12 +81,15 @@ The MedQA Registry defaults are `temperature=0.1` and `max_tokens=2048`.
 Override them per run with `--extra_eval_params`, for example
 `temperature=0.2,max_tokens=512` for a reasoning model.
 
-When `--record_path` and `--log_to_file` are omitted, the CLI automatically
-writes paired files under `experiments/runs/` using the pattern
-`{eval_id}__{model}__{run_id}.jsonl` and `{eval_id}__{model}__{run_id}.log`.
+When `--record_path` is omitted, the external Evals CLI automatically writes
+the result JSONL under `/tmp/evallogs/` using the pattern
+`{run_id}_{completion_fn}_{eval}.jsonl`. When `--log_to_file` is omitted, logs
+are written to the terminal rather than to an additional `.log` file. Use
+`--record_path` and `--log_to_file` when results or logs should be retained
+under `experiments/runs/`.
 
 The `medical-openai-compatible` CompletionFn is registered in
-`evals/registry/completion_fns/medical_openai_compatible.yaml`. The example
+`registry/completion_fns/medical_openai_compatible.yaml`. The example
 metadata in `configs/medical_medqa_smoke.yaml` documents the dataset, Eval,
 model, CompletionFn, and single-sample runner settings.
 
@@ -109,6 +105,7 @@ export OPENAI_BASE_URL="https://example.com/v1"
 export OPENAI_MODEL="your-model"
 
 uv run oaieval medical-openai-compatible medical-healthbench.smoke.v1 \
+  --registry_path ./registry \
   --max_samples 2 \
   --local-run \
   --record_path ./experiments/runs/healthbench-smoke.jsonl
@@ -123,7 +120,7 @@ OpenAI-compatible adapter in the Registry.
 
 ## Model integration strategy
 
-All model and system calls are exposed to evaluations through the retained
+All model and system calls are exposed to evaluations through the external
 `CompletionFn` protocol. Evaluation tasks do not call a provider SDK directly.
 This keeps the evaluation layer independent from any single model vendor.
 
@@ -148,9 +145,10 @@ CompletionFn
 Provider, local model, gateway, or agent adapter
 ```
 
-Future adapters will live under `medical_evals/adapters/`, while the retained
-`evals/` package remains responsible for the CompletionFn protocol, scheduling,
-recording, Registry, and CLI execution.
+Future adapters will live under `medical_evals/adapters/`, while the pinned
+external `evals` package remains responsible for the CompletionFn protocol,
+scheduling, recording, Registry, and CLI execution. The dependency is pinned to
+an OpenAI Evals commit in `pyproject.toml` for reproducible installs.
 
 ## Roadmap
 
@@ -163,6 +161,8 @@ recording, Registry, and CLI execution.
 
 ## License and provenance
 
-The retained OpenAI Evals code is distributed under the original MIT License.
+The external OpenAI Evals dependency is distributed under its original MIT
+License. This project’s code is distributed under the license in this
+repository.
 See [LICENSE.md](LICENSE.md), [NOTICE.md](NOTICE.md), and
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

@@ -3,7 +3,7 @@
 # metadata and is not parsed by the retained evals CLI.
 dataset:
   id: medical-medqa.dev.v1
-  path: evals/registry/data/medical_medqa/samples.jsonl
+  path: registry/data/medical_medqa/samples.jsonl
   split: dev
 
 eval:

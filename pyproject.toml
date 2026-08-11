@@ -9,6 +9,7 @@ description = "Medical LLM Evaluation Framework based on OpenAI Evals"
 requires-python = ">=3.9"
 readme = "README.md"
 dependencies = [
+    "evals @ git+https://github.com/openai/evals.git@8eac7a7de5215c907fbddc30efdaf316913eccdd",
     "aiolimiter",
     "anthropic",
     "backoff",
@@ -64,7 +65,7 @@ oaieval = "evals.cli.oaieval:main"
 oaievalset = "evals.cli.oaievalset:main"
 
 [tool.setuptools.packages.find]
-include = ["evals*", "medical_evals*"]
+include = ["medical_evals*"]
 
 [tool.ruff]
 # Allow lines to be as long as 767 characters, this is currently the longest line

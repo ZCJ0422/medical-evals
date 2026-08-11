@@ -15,7 +15,7 @@
 - Keep the existing MedQA behavior and Registry entries unchanged.
 - Judge output must be parsed as structured JSON with a boolean `criteria_met` and string `explanation`.
 - A failed individual judge call is recorded as an unmet criterion and does not abort later samples.
-- HealthBench full data remains under `dataset/HealthBench`; Registry smoke data is copied into `evals/registry/data/medical_healthbench`.
+- HealthBench full data remains under `dataset/HealthBench`; Registry smoke data is copied into `registry/data/medical_healthbench`.
 
 ## File Map
 
@@ -27,8 +27,8 @@
 - Modify `medical-evals/medical_evals/judges/__init__.py`: export judge helpers.
 - Create `medical-evals/medical_evals/evals/healthbench.py`: HealthBench Eval orchestration and reports.
 - Modify `medical-evals/medical_evals/evals/__init__.py`: export `HealthBenchEval`.
-- Create `medical-evals/evals/registry/data/medical_healthbench/smoke.jsonl`: two minimal open-ended samples.
-- Create `medical-evals/evals/registry/evals/medical_healthbench.yaml`: base eval plus main, hard, consensus, and smoke IDs.
+- Create `medical-evals/registry/data/medical_healthbench/smoke.jsonl`: two minimal open-ended samples.
+- Create `medical-evals/registry/evals/medical_healthbench.yaml`: base eval plus main, hard, consensus, and smoke IDs.
 - Create `medical-evals/tests/medical_evals/test_healthbench_dataset.py`.
 - Create `medical-evals/tests/metrics/test_healthbench.py`.
 - Create `medical-evals/tests/medical_evals/test_healthbench_judge.py`.
@@ -259,8 +259,8 @@ git commit -m "feat: add HealthBench evaluation orchestration"
 ### Task 5: Register smoke, main, hard, and consensus evaluations
 
 **Files:**
-- Create: `medical-evals/evals/registry/data/medical_healthbench/smoke.jsonl`
-- Create: `medical-evals/evals/registry/evals/medical_healthbench.yaml`
+- Create: `medical-evals/registry/data/medical_healthbench/smoke.jsonl`
+- Create: `medical-evals/registry/evals/medical_healthbench.yaml`
 - Create: `medical-evals/tests/integration/test_healthbench_pipeline.py`
 
 **Interfaces:**
@@ -276,7 +276,7 @@ Create valid samples with one user message and two rubrics each, including a pos
 
 - [ ] **Step 2: Add Registry definitions**
 
-Set `judge_completion_fn: medical-openai-compatible`, `temperature: 0.1`, `max_tokens: 1024`, `judge_temperature: 0.0`, and `judge_max_tokens: 256`. Keep full-data paths as explicit relative paths from the Registry `data` directory; four `..` components are required to reach the repository root from `evals/registry/data`.
+Set `judge_completion_fn: medical-openai-compatible`, `temperature: 0.1`, `max_tokens: 1024`, `judge_temperature: 0.0`, and `judge_max_tokens: 256`. Keep full-data paths as explicit relative paths from the Registry `data` directory; four `..` components are required to reach the repository root from `registry/data`.
 
 - [ ] **Step 3: Write failing Registry and fake-client integration tests**
 
@@ -291,7 +291,7 @@ Expected: PASS after wiring Registry and adapter behavior.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add evals/registry/data/medical_healthbench/smoke.jsonl evals/registry/evals/medical_healthbench.yaml tests/integration/test_healthbench_pipeline.py
+git add registry/data/medical_healthbench/smoke.jsonl registry/evals/medical_healthbench.yaml tests/integration/test_healthbench_pipeline.py
 git commit -m "feat: register HealthBench evaluation sets"
 ```
 
