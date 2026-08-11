@@ -1,4 +1,4 @@
-from evals.registry import is_chat_model, n_ctx_from_model_name
+from evals.registry import Registry, is_chat_model, n_ctx_from_model_name
 
 
 def test_n_ctx_from_model_name():
@@ -30,3 +30,8 @@ def test_is_chat_model():
     assert not is_chat_model("text-davinci-003")
     assert not is_chat_model("gpt4-base")
     assert not is_chat_model("code-davinci-002")
+
+
+def test_registry_imports_without_api_credentials(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert Registry([]).api_model_ids == []

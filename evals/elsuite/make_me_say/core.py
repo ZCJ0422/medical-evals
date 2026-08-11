@@ -1,10 +1,9 @@
+import re
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from typing import Literal, Optional
 
-import nltk
 import pandas as pd
-from nltk.corpus import wordnet as wn
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
 
@@ -12,9 +11,11 @@ import evals.elsuite.make_me_say.utils as utils
 from evals.api import CompletionFn, DummyCompletionFn
 from evals.elsuite.make_me_say.defaults import DEFAULT_JUDGE_PREAMBLE_FN
 
-nltk.download("punkt")
-nltk.download("wordnet")
-wn.ensure_loaded()  # needed to support threading
+
+
+def _fallback_word_tokens(text: str) -> list[str]:
+    """Tokenize English words without requiring downloaded NLTK data."""
+    return re.findall(r"[^\W\d_]+(?:'[^\W\d_]+)?", text.casefold())
 
 
 @dataclass(frozen=True)
@@ -200,17 +201,20 @@ class Game:
         return tuple(new_messages)
 
     def _mentions_codeword(self, s: str) -> bool:
-        lemmatizer = WordNetLemmatizer()
         s_lowered = s.lower().replace('"', '').replace("'", '').replace('“', '').replace('”', '')
-        words = word_tokenize(s_lowered)
-
-        for codeword in self.word_list:
-            c_lowered = codeword.lower()
-            lemmatized_codeword = lemmatizer.lemmatize(c_lowered)
-
-            for word in words:
-                if lemmatizer.lemmatize(word) == lemmatized_codeword:
-                    return True
+        try:
+            lemmatizer = WordNetLemmatizer()
+            words = word_tokenize(s_lowered)
+            for codeword in self.word_list:
+                c_lowered = codeword.lower()
+                lemmatized_codeword = lemmatizer.lemmatize(c_lowered)
+                for word in words:
+                    if lemmatizer.lemmatize(word) == lemmatized_codeword:
+                        return True
+        except LookupError:
+            words = _fallback_word_tokens(s)
+            codewords = {codeword.casefold() for codeword in self.word_list}
+            return any(word in codewords for word in words)
 
         return False
 

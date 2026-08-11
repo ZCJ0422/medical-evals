@@ -23,9 +23,25 @@ from evals.base import BaseEvalSpec, CompletionFnSpec, EvalSetSpec, EvalSpec
 from evals.elsuite.modelgraded.base import ModelGradedSpec
 from evals.utils.misc import make_object
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
 logger = logging.getLogger(__name__)
+
+
+class _LazyOpenAIClient:
+    """Create the OpenAI client only when a registry API call needs it."""
+
+    def __init__(self):
+        self._client = None
+
+    def _get(self):
+        if self._client is None:
+            self._client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        return self._client
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+
+client = _LazyOpenAIClient()
 
 DEFAULT_PATHS = [
     Path(__file__).parents[0].resolve() / "registry",
