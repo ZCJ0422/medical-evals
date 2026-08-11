@@ -45,6 +45,16 @@ Directory responsibilities are intentionally separated:
 
 ## Development
 
+To get the latest project snapshot without downloading the full Git history:
+
+```bash
+git clone --depth 1 https://github.com/ZCJ0422/medical-evals.git
+cd medical-evals
+```
+
+Use a regular `git clone` instead if you need to inspect the complete commit
+history.
+
 The project uses `uv` for environment and lockfile management:
 
 ```bash
