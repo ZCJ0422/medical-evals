@@ -97,6 +97,30 @@ The `medical-openai-compatible` CompletionFn is registered in
 metadata in `configs/medical_medqa_smoke.yaml` documents the dataset, Eval,
 model, CompletionFn, and single-sample runner settings.
 
+## HealthBench open-ended smoke test
+
+HealthBench evaluates natural-language medical answers against per-sample
+rubrics using a second CompletionFn as a structured judge. The target model
+does not receive the rubrics. Run the two-sample smoke set with:
+
+```bash
+export OPENAI_API_KEY="xxx"
+export OPENAI_BASE_URL="https://example.com/v1"
+export OPENAI_MODEL="your-model"
+
+uv run oaieval medical-openai-compatible medical-healthbench.smoke.v1 \
+  --max_samples 2 \
+  --local-run \
+  --record_path ./experiments/runs/healthbench-smoke.jsonl
+```
+
+The main, hard, and consensus datasets are available as
+`medical-healthbench.oss.v1`, `medical-healthbench.hard.v1`, and
+`medical-healthbench.consensus.v1`. Their full JSONL files live under
+`../dataset/HealthBench/` in the repository workspace. The judge adapter is
+configured through `judge_completion_fn` and defaults to the same registered
+OpenAI-compatible adapter in the Registry.
+
 ## Model integration strategy
 
 All model and system calls are exposed to evaluations through the retained

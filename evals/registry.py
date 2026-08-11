@@ -262,6 +262,10 @@ class Registry:
     def _load_directory(self, path: Path) -> Generator[Tuple[str, Path, dict], None, None]:
         files = Path(path).glob("*.yaml")
         for file in files:
+            # macOS may create AppleDouble resource-fork sidecars (._name).
+            # They are binary metadata files, not registry YAML documents.
+            if file.name.startswith("._") or file.name == ".DS_Store":
+                continue
             yield from self._load_file(file)
 
     def _load_resources(

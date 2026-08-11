@@ -20,6 +20,24 @@ These CLIs can accept various flags to modify their default behavior. For exampl
 
 You can run `oaieval --help` to see a full list of CLI options.
 
+## Running HealthBench open-ended QA
+
+HealthBench uses the target model to generate a natural-language answer and a
+separate structured judge call to determine whether each sample-specific
+rubric criterion is met. The smoke evaluation is useful for validating model,
+judge, Recorder, and Registry wiring before running the full datasets:
+
+```sh
+OPENAI_API_KEY=xxx OPENAI_BASE_URL=https://example.com/v1 OPENAI_MODEL=your-model \
+uv run oaieval medical-openai-compatible medical-healthbench.smoke.v1 \
+  --max_samples 2 --local-run
+```
+
+Available full-data IDs are `medical-healthbench.oss.v1`,
+`medical-healthbench.hard.v1`, and `medical-healthbench.consensus.v1`.
+Results contain per-rubric judgments, weighted `overall_score`, and
+tag-level scores.
+
 ## Running an eval set
 
 ```sh
