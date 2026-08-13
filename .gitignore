@@ -46,3 +46,9 @@ openai-key.txt
 # Ignore run_experiments.sh results
 evals/elsuite/**/logs/
 evals/elsuite/**/outputs/
+
+# Local Medical Evals workbench runtime state and browser artifacts.
+backend/data/
+frontend/.next/
+frontend/test-results/
+frontend/playwright-report/
