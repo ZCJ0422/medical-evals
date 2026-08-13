@@ -61,6 +61,35 @@ Detailed technical documentation:
 - [MedQA technical documentation](docs/medqa-technical.md)
 - [HealthBench technical documentation](docs/healthbench-technical.md)
 
+## Internal workbench
+
+The first workbench vertical slice lives under `backend/` and `frontend/`. It is
+designed for one fixed administrator account and a single-machine internal
+deployment. The API and worker boundaries are separate from the existing
+evaluation code so the evaluator can later move to a multi-worker deployment.
+
+Initialize the local API database and start the API with:
+
+```bash
+cd backend
+python -m medical_evals_api.cli init-db
+./scripts/run_api.sh
+```
+
+The frontend is a separate Next.js application:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Do not place provider API keys in frontend configuration, browser storage,
+Registry files, run JSONL, reports, or logs. Platform benchmark questions,
+answers, and complete Rubrics are protected backend data; ordinary result
+responses expose only aggregate metrics. The administrator-only raw-sample
+route is intentionally separate from the public result summary route.
+
 The project uses `uv` for environment and lockfile management:
 
 ```bash
