@@ -2,11 +2,16 @@ from pydantic import BaseModel, Field
 
 
 class EvaluationCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
+    name: str = Field(default="", max_length=120)
     target_model_id: str
-    judge_model_id: str
+    judge_model_id: str = ""
     dataset_version_id: str
     rubric_id: str
+    target_base_url: str = ""
+    target_api_key: str = ""
+    judge_base_url: str = ""
+    judge_api_key: str = ""
+    max_samples: int | None = Field(default=None, ge=1, le=10000)
 
 
 class PreflightResponse(BaseModel):

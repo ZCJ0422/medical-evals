@@ -33,17 +33,27 @@ def build_rubric_judge_prompt(
 
 
 def parse_rubric_judgment(text: str) -> dict:
-    """Parse a judge JSON response, allowing an optional Markdown fence."""
+    """Parse a judge JSON response with optional reasoning or Markdown around it."""
     if not isinstance(text, str):
         raise ValueError("judge response must be a string")
     value = text.strip()
-    if value.startswith("```") and value.endswith("```"):
-        lines = value.splitlines()
-        value = "\n".join(lines[1:-1]).strip()
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid judge JSON: {exc}") from exc
+    decoder = json.JSONDecoder()
+    parsed = None
+    last_error = None
+    for offset, character in enumerate(value):
+        if character != "{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(value, offset)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if isinstance(candidate, Mapping):
+            parsed = candidate
+            break
+    if parsed is None:
+        detail = last_error or json.JSONDecodeError("Expecting JSON object", value, 0)
+        raise ValueError(f"invalid judge JSON: {detail}") from detail
     if not isinstance(parsed, Mapping):
         raise ValueError("judge response must be a JSON object")
     criteria_met = parsed.get("criteria_met")
@@ -69,7 +79,7 @@ def resolve_judge_completion_fn(value: Any, registry: Any):
 class RubricJudge:
     """Call a CompletionFn and parse one rubric judgment."""
 
-    def __init__(self, completion_fn, *, temperature: float = 0.0, max_tokens: int = 256):
+    def __init__(self, completion_fn, *, temperature: float = 0.0, max_tokens: int = 5120):
         self.completion_fn = completion_fn
         self.temperature = temperature
         self.max_tokens = max_tokens

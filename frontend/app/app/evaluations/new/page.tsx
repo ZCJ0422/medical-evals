@@ -1,9 +1,18 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { ArrowLeftIcon } from "../../../../components/icons";
+import { EvaluationWizard } from "../../../../components/evaluation-wizard";
+import { PageHeader } from "../../../../components/page-header";
+import { InlineAlert, Skeleton } from "../../../../components/ui";
+import { api } from "../../../../lib/api";
+import type { DatasetVersion } from "../../../../lib/types";
+import { useLocale } from "../../../../lib/i18n";
 
 export default function NewEvaluationPage() {
-  const [submitted, setSubmitted] = useState(false);
-  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setSubmitted(true); }
-  return <main className="shell"><p className="eyebrow">New evaluation</p><h1>Configure a run</h1><form className="form" onSubmit={submit}><label>Run name<input name="name" required placeholder="HealthBench smoke" /></label><label>Target model<input name="target" required placeholder="model-id" /></label><label>Judge Model<input name="judge" required placeholder="judge-model-id" /></label><label>Dataset version<select name="dataset" defaultValue="healthbench-v1"><option value="healthbench-v1">HealthBench · v1</option></select></label><button className="action" type="submit">Preflight and continue</button>{submitted && <p role="status">Preflight request ready for API integration.</p>}</form></main>;
+  const { t } = useLocale();
+  const [datasets, setDatasets] = useState<DatasetVersion[]>([]); const [error, setError] = useState("");
+  useEffect(() => { api<DatasetVersion[]>("/api/datasets").then(setDatasets).catch(() => setError(t("unableLoadDatasets"))); }, [t]);
+  return <main className="shell"><Link href="/app/evaluations" className="back-link"><ArrowLeftIcon size={16} />{t("backToEvaluations")}</Link><PageHeader eyebrow={t("newEvaluation")} title={t("configure")} description={t("configureLead")} />{error ? <InlineAlert tone="error">{error}</InlineAlert> : datasets.length ? <EvaluationWizard datasets={datasets} /> : <div className="panel loading-list"><Skeleton /><Skeleton /><Skeleton /></div>}</main>;
 }

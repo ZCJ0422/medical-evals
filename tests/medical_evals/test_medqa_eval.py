@@ -230,7 +230,7 @@ def test_registry_loads_medqa_eval_spec():
     assert spec is not None
     assert spec.cls == "medical_evals.evals.medqa:MedQAEval"
     assert spec.args["temperature"] == 0.1
-    assert spec.args["max_tokens"] == 2048
+    assert spec.args["max_tokens"] == 5120
     assert spec.args["samples_jsonl"] == "medical_medqa/dev.jsonl"
     eval_factory = registry.get_class(spec)
     assert eval_factory.func is MedQAEval

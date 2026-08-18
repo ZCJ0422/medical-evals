@@ -68,12 +68,21 @@ designed for one fixed administrator account and a single-machine internal
 deployment. The API and worker boundaries are separate from the existing
 evaluation code so the evaluator can later move to a multi-worker deployment.
 
-Initialize the local API database and start the API with:
+Install the backend dependencies once, then initialize the local API database
+and start the API with:
+
+```bash
+uv sync --extra test
+cd backend
+PYTHONPATH=.:.. uv run python -m medical_evals_api.cli init-db
+PYTHONPATH=.:.. uv run python -m medical_evals_api.cli api
+```
+
+In a separate terminal, start the worker:
 
 ```bash
 cd backend
-python -m medical_evals_api.cli init-db
-./scripts/run_api.sh
+PYTHONPATH=.:.. uv run python -m medical_evals_api.cli worker
 ```
 
 The frontend is a separate Next.js application:
@@ -83,6 +92,25 @@ cd frontend
 npm install
 npm run dev
 ```
+
+To run real OpenAI-compatible evaluations, export the backend/Worker secrets
+before starting both processes. The UI stores only the environment-variable
+names, never the API key values:
+
+```bash
+export MEDICAL_EVALS_TARGET_API_KEY="sk-target..."
+export MEDICAL_EVALS_JUDGE_API_KEY="sk-judge..."
+cd backend
+PYTHONPATH=.:.. uv run python -m medical_evals_api.cli worker
+```
+
+For local configuration, copy `backend/.env.example` to `backend/.env` and
+keep the copy out of Git. Production mode refuses the development token and
+encryption secrets, and requires a configured administrator password hash.
+
+The target and Judge Base URLs can be any OpenAI-compatible `/v1` endpoint.
+MedQA uses the target model and exact-answer metrics; HealthBench uses the
+target model for answers and the Judge Model for rubric JSON judgments.
 
 Do not place provider API keys in frontend configuration, browser storage,
 Registry files, run JSONL, reports, or logs. Platform benchmark questions,
@@ -158,8 +186,11 @@ uv run oaieval medical-openai-compatible medical-healthbench.smoke.v1 \
 
 The main, hard, and consensus datasets are available as
 `medical-healthbench.oss.v1`, `medical-healthbench.hard.v1`, and
-`medical-healthbench.consensus.v1`. Their full JSONL files live under
-`../dataset/HealthBench/` in the repository workspace. The judge adapter is
+`medical-healthbench.consensus.v1`. Their full JSONL files are local-only
+benchmark inputs and must be placed under `dataset/HealthBench/` in the
+repository workspace; they are intentionally excluded from GitHub. The small
+registered smoke fixture remains versioned under `registry/data/` for local
+and CI checks. The judge adapter is
 configured through `judge_completion_fn` and defaults to the same registered
 OpenAI-compatible adapter in the Registry.
 

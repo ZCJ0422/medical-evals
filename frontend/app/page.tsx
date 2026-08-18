@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function HomePage() {
   return (
     <main className="shell" aria-labelledby="page-title">
@@ -8,6 +10,7 @@ export default function HomePage() {
         <strong>Workspace ready</strong>
         <span>Sign in to configure a model and start an evaluation.</span>
       </div>
+      <Link className="action" href="/login">Sign in</Link>
     </main>
   );
 }

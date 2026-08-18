@@ -14,4 +14,5 @@ class LocalTaskQueue:
             raise ValueError("only queued tasks can be enqueued")
 
     def claim_next(self) -> str | None:
-        raise NotImplementedError("SQLite claim transaction is implemented with the Worker integration")
+        task = self.repository.next_queued()
+        return task.task_id if task else None

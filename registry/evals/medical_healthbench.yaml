@@ -9,36 +9,36 @@ medical-healthbench.smoke.v1:
     samples_jsonl: medical_healthbench/smoke.jsonl
     judge_completion_fn: medical-openai-compatible
     temperature: 0.1
-    max_tokens: 1024
+    max_tokens: 5120
     judge_temperature: 0.0
-    judge_max_tokens: 256
+    judge_max_tokens: 5120
 
 medical-healthbench.oss.v1:
   class: medical_evals.evals.healthbench:HealthBenchEval
   args:
-    samples_jsonl: ../../../../dataset/HealthBench/2025-05-07-06-14-12_oss_eval.jsonl
+    samples_jsonl: ../../dataset/HealthBench/2025-05-07-06-14-12_oss_eval.jsonl
     judge_completion_fn: medical-openai-compatible
     temperature: 0.1
-    max_tokens: 1024
+    max_tokens: 5120
     judge_temperature: 0.0
-    judge_max_tokens: 256
+    judge_max_tokens: 5120
 
 medical-healthbench.hard.v1:
   class: medical_evals.evals.healthbench:HealthBenchEval
   args:
-    samples_jsonl: ../../../../dataset/HealthBench/hard_2025-05-08-21-00-10.jsonl
+    samples_jsonl: ../../dataset/HealthBench/hard_2025-05-08-21-00-10.jsonl
     judge_completion_fn: medical-openai-compatible
     temperature: 0.1
-    max_tokens: 1024
+    max_tokens: 5120
     judge_temperature: 0.0
-    judge_max_tokens: 256
+    judge_max_tokens: 5120
 
 medical-healthbench.consensus.v1:
   class: medical_evals.evals.healthbench:HealthBenchEval
   args:
-    samples_jsonl: ../../../../dataset/HealthBench/consensus_2025-05-09-20-00-46.jsonl
+    samples_jsonl: ../../dataset/HealthBench/consensus_2025-05-09-20-00-46.jsonl
     judge_completion_fn: medical-openai-compatible
     temperature: 0.1
-    max_tokens: 1024
+    max_tokens: 5120
     judge_temperature: 0.0
-    judge_max_tokens: 256
+    judge_max_tokens: 5120

@@ -70,4 +70,4 @@ def test_rubric_judge_forwards_structured_judge_request():
     )
 
     assert result["criteria_met"] is True
-    assert completion_fn.kwargs == [{"temperature": 0.0, "max_tokens": 256}]
+    assert completion_fn.kwargs == [{"temperature": 0.0, "max_tokens": 5120}]

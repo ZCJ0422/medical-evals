@@ -8,4 +8,4 @@ medical-medqa.dev.v1:
   args:
     samples_jsonl: medical_medqa/dev.jsonl
     temperature: 0.1
-    max_tokens: 2048
+    max_tokens: 5120

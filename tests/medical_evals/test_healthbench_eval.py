@@ -30,6 +30,15 @@ class PresetCompletionFn:
         return PresetCompletionResult(next(self.responses))
 
 
+class RecordingDummyRecorder(DummyRecorder):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.final_reports = []
+
+    def record_final_report(self, report):
+        self.final_reports.append(report)
+
+
 def write_samples(path: Path):
     rows = [
         {
@@ -53,6 +62,20 @@ def write_samples(path: Path):
 
 def make_recorder():
     return DummyRecorder(
+        RunSpec(
+            completion_fns=["target"],
+            eval_name="medical-healthbench.smoke.v1",
+            base_eval="medical-healthbench",
+            split="smoke",
+            run_config={},
+            created_by="test",
+        ),
+        log=False,
+    )
+
+
+def make_recording_recorder():
+    return RecordingDummyRecorder(
         RunSpec(
             completion_fns=["target"],
             eval_name="medical-healthbench.smoke.v1",
@@ -92,3 +115,29 @@ def test_healthbench_eval_keeps_rubrics_out_of_target_prompt(tmp_path, monkeypat
     assert any("Mentions red flags" in json.dumps(prompt) for prompt in judge.prompts)
     assert result["sample_count"] == 2
     assert result["overall_score"] > 0
+
+
+def test_healthbench_eval_leaves_success_report_to_outer_runner(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVALS_SEQUENTIAL", "1")
+    path = tmp_path / "healthbench.jsonl"
+    write_samples(path)
+    target = PresetCompletionFn(["I will mention red flags.", "Rest gently."])
+    judge = PresetCompletionFn(
+        [
+            '{"criteria_met": true, "explanation": "covered"}',
+            '{"criteria_met": false, "explanation": "not harmful"}',
+            '{"criteria_met": true, "explanation": "covered"}',
+        ]
+    )
+    recorder = make_recording_recorder()
+    evaluation = HealthBenchEval(
+        completion_fns=[target],
+        eval_registry_path=tmp_path,
+        name="medical-healthbench.smoke.v1",
+        samples_jsonl=str(path),
+        judge_completion_fn=judge,
+    )
+
+    evaluation.run(recorder)
+
+    assert recorder.final_reports == []

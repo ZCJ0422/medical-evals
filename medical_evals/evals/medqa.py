@@ -33,7 +33,7 @@ def build_prompt(sample: dict) -> str:
 class MedQAEval(evals.Eval):
     """Evaluate a model on four-option MedQA samples."""
 
-    def __init__(self, *args, temperature: float = 0.1, max_tokens: int = 2048, **kwargs):
+    def __init__(self, *args, temperature: float = 0.1, max_tokens: int = 5120, **kwargs):
         super().__init__(*args, **kwargs)
         self.temperature = temperature
         self.max_tokens = max_tokens

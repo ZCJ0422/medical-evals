@@ -27,11 +27,11 @@ class HealthBenchEval(evals.Eval):
         self,
         *args,
         temperature: float = 0.1,
-        max_tokens: int = 2048,
+        max_tokens: int = 5120,
         judge_completion_fn=None,
         judge_model: str | None = None,
         judge_temperature: float = 0.0,
-        judge_max_tokens: int = 256,
+        judge_max_tokens: int = 5120,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -111,7 +111,6 @@ class HealthBenchEval(evals.Eval):
             "model": self._model_name(recorder),
             "judge_model": self._judge_model_name(),
         }
-        recorder.record_final_report(result)
         return result
 
     def eval_sample(self, sample: dict, rng: random.Random):

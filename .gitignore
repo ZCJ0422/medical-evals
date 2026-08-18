@@ -49,6 +49,14 @@ evals/elsuite/**/outputs/
 
 # Local Medical Evals workbench runtime state and browser artifacts.
 backend/data/
+backend/backend/
 frontend/.next/
+frontend/.next-build/
 frontend/test-results/
 frontend/playwright-report/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+
+# Full HealthBench JSONL files are local benchmark inputs. Keep only the
+# small registered smoke fixture under registry/data/ in Git.
+dataset/HealthBench/

@@ -19,6 +19,7 @@ class TaskProgress(BaseModel):
     success_count: int = 0
     failed_count: int = 0
     retry_count: int = 0
+    stage: str = "queued"
 
 
 class TaskSummary(BaseModel):
@@ -31,6 +32,9 @@ class TaskSummary(BaseModel):
     dataset_version_id: str
     status: TaskStatus
     progress: TaskProgress
+    created_at: str | None = None
+    updated_at: str | None = None
+    error: str | None = None
 
 
 class ProviderSummary(BaseModel):
