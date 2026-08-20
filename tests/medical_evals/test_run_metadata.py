@@ -6,7 +6,7 @@ from pathlib import Path
 from evals.base import RunSpec
 from evals.record import DummyRecorder, record_sampling
 from medical_evals.models import ModelSpec
-from medical_evals.reports import EvalRunMetadata, write_run_metadata
+from medical_evals.reports import EvalRunMetadata, sha256_file, write_run_metadata
 
 
 def make_run_spec() -> RunSpec:
@@ -107,3 +107,39 @@ def test_run_metadata_associates_sampling_event_by_run_id():
 
     assert metadata.matches_sampling_event(sampling_event)
     assert sampling_event.run_id == metadata.run_id
+
+
+def test_run_metadata_captures_reproducibility_and_audit_fields(tmp_path):
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text('{"id": 1}\n', encoding="utf-8")
+    metadata = EvalRunMetadata(
+        eval_id="medical-healthbench.smoke.v1",
+        dataset_version="smoke.v1",
+        dataset_id="medical-healthbench",
+        dataset_sha256=sha256_file(dataset),
+        dataset_sample_count=1,
+        model_spec=ModelSpec(model_id="target", provider="openai-compatible"),
+        target_model_spec=ModelSpec(model_id="target", provider="openai-compatible"),
+        judge_model_spec=ModelSpec(model_id="judge", provider="openai-compatible"),
+        prompt_version="healthbench.prompt.v1",
+        rubric_version="healthbench.rubric.v1",
+        grader_version="rubric-judge.v1",
+        entrypoint="workbench",
+        code_version="abc123",
+        generation_parameters={"temperature": 0.1, "max_tokens": 5120},
+        judge_parameters={"temperature": 0.0, "max_tokens": 5120},
+        retry_policy={"max_retries": 2, "backoff_seconds": [1.0, 2.0]},
+        max_samples=10,
+    )
+
+    payload = metadata.to_dict()
+
+    assert payload["schema_version"] == "eval-run-metadata.v2"
+    assert payload["dataset_sha256"] == sha256_file(dataset)
+    assert payload["target_model_spec"]["model_id"] == "target"
+    assert payload["judge_model_spec"]["model_id"] == "judge"
+    assert payload["retry_policy"]["backoff_seconds"] == [1.0, 2.0]
+    assert payload["privacy"] == {
+        "raw_outputs_recorded": False,
+        "credentials_recorded": False,
+    }

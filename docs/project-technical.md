@@ -156,6 +156,12 @@ medical-medqa.dev.v1:
 数据集版本、模型规格、prompt 版本和 grader 版本等元数据。API key 不应写入
 Registry、配置文件或运行记录。
 
+当前 metadata schema 为 `eval-run-metadata.v2`，并额外支持：数据集 SHA-256
+指纹和样本数、CLI/Workbench 入口、代码版本、target/Judge 双模型规格、两套
+生成参数、重试策略、随机种子、`max_samples` 以及隐私声明。数据指纹只保存
+哈希，不保存数据集内容；隐私字段明确声明原始输出和凭据是否被记录，凭据永远
+不进入 metadata。
+
 ## 8. 测试策略
 
 ```bash

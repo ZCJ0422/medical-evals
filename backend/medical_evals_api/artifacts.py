@@ -17,6 +17,7 @@ class ArtifactWriter:
         self.samples_path = self.directory / "samples.jsonl"
         self.log_path = self.directory / "run.log"
         self.summary_path = self.directory / "summary.json"
+        self.metadata_path = self.directory / "metadata.json"
         self._sample_indexes_are_strictly_increasing = True
         self._last_sample_index: int | None = None
         self._initialize_sample_index_state()
@@ -163,3 +164,10 @@ class ArtifactWriter:
 
     def write_summary(self, summary: dict) -> None:
         self.summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def write_metadata(self, metadata: dict) -> None:
+        """Write reproducibility metadata without credentials or raw secrets."""
+        self.metadata_path.write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )

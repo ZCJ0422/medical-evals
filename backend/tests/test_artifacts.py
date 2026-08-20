@@ -17,6 +17,20 @@ def test_artifact_writer_appends_samples_and_writes_summary(tmp_path):
     assert json.loads((tmp_path / "task-1" / "summary.json").read_text())["accuracy"] == 0.5
 
 
+def test_artifact_writer_writes_reproducibility_metadata_without_credentials(tmp_path):
+    writer = ArtifactWriter(tmp_path, "task-1")
+    writer.write_metadata({
+        "schema_version": "eval-run-metadata.v2",
+        "dataset_sha256": "abc",
+        "target_model_spec": {"model_id": "target"},
+        "privacy": {"credentials_recorded": False},
+    })
+
+    payload = json.loads(writer.metadata_path.read_text(encoding="utf-8"))
+    assert payload["dataset_sha256"] == "abc"
+    assert payload["privacy"]["credentials_recorded"] is False
+
+
 def test_artifact_writer_appends_resume_logs_without_overwriting_previous_run(tmp_path):
     writer = ArtifactWriter(tmp_path, "task-1")
     writer.log("task started")

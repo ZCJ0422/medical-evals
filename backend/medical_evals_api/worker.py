@@ -3,6 +3,10 @@ from .models import EvaluationTask
 from .repositories.tasks import TaskRepository
 from .schemas.common import TaskProgress, TaskStatus
 from .artifacts import ArtifactWriter, artifact_root_for_database
+from medical_evals.models import ModelSpec
+from medical_evals.reports import EvalRunMetadata, sha256_file
+from .evaluator_adapter import healthbench_samples_path
+from .paths import registry_data_path
 
 
 def _safe_error(error: Exception) -> str:
@@ -28,6 +32,31 @@ class Worker:
         artifacts.log(f"[config] target_model={task.target_model_id}")
         artifacts.log(f"[config] judge_model={task.judge_model_id or '-'}")
         artifacts.log(f"[config] max_samples={task.max_samples or 'all'}")
+        dataset_path = None
+        if task.dataset_version_id.startswith("medical-medqa"):
+            dataset_path = registry_data_path("medical_medqa", "dev.jsonl")
+        elif task.dataset_version_id.startswith("medical-healthbench"):
+            dataset_path = healthbench_samples_path(task.dataset_version_id)
+        metadata = EvalRunMetadata(
+            eval_id=task.dataset_version_id,
+            dataset_version=task.dataset_version_id.rsplit(".", 1)[-1],
+            dataset_id=task.dataset_version_id.rsplit(".", 1)[0],
+            dataset_sha256=sha256_file(dataset_path) if dataset_path and dataset_path.exists() else None,
+            model_spec=ModelSpec(model_id=task.target_model_id, provider="openai-compatible"),
+            target_model_spec=ModelSpec(model_id=task.target_model_id, provider="openai-compatible"),
+            judge_model_spec=(ModelSpec(model_id=task.judge_model_id, provider="openai-compatible") if task.judge_model_id else None),
+            prompt_version=f"{task.dataset_version_id.rsplit('.', 1)[0]}.prompt.v1",
+            rubric_version=(f"{task.rubric_id}.v1" if task.rubric_id else None),
+            grader_version="healthbench-rubric-judge.v1" if task.dataset_version_id.startswith("medical-healthbench") else "medqa-choice-grader.v1",
+            entrypoint="workbench",
+            run_id=task.task_id,
+            generation_parameters={"temperature": 0.1, "max_tokens": 5120},
+            judge_parameters={"temperature": 0.0, "max_tokens": 5120} if task.judge_model_id else {},
+            retry_policy={"max_retries": 2, "backoff_seconds": [1.0, 2.0]},
+            max_samples=task.max_samples,
+            privacy={"raw_outputs_recorded": True, "credentials_recorded": False},
+        )
+        artifacts.write_metadata(metadata.to_dict())
         checkpoint = artifacts.load_checkpoint()
         if checkpoint:
             artifacts.rewrite_samples(list(checkpoint.values()))

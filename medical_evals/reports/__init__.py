@@ -1,5 +1,5 @@
 """Medical evaluation report generation and export helpers."""
 
-from .run_metadata import EvalRunMetadata, write_run_metadata
+from .run_metadata import EvalRunMetadata, sha256_file, write_run_metadata
 
-__all__ = ["EvalRunMetadata", "write_run_metadata"]
+__all__ = ["EvalRunMetadata", "sha256_file", "write_run_metadata"]
