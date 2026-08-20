@@ -96,6 +96,8 @@ def test_medqa_pipeline_records_one_sampling_and_one_match(tmp_path, monkeypatch
         eval_registry_path=tmp_path,
         name="medical-medqa.dev.v1",
         samples_jsonl=str(dataset_path),
+        temperature=0.2,
+        max_tokens=512,
     )
 
     result = evaluation.run(recorder)
@@ -116,6 +118,7 @@ def test_medqa_pipeline_records_one_sampling_and_one_match(tmp_path, monkeypatch
         "completion_tokens": 1,
         "total_tokens": 33,
     }
+    assert sampling_data["request_metadata"] == {"temperature": 0.2, "max_tokens": 512}
     assert isinstance(sampling_data["latency"], float)
     assert sampling_data["latency"] >= 0
 

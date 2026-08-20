@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Mapping
-from contextvars import ContextVar
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Optional
 
@@ -194,10 +193,6 @@ class OpenAICompatibleCompletionFn(CompletionFn):
             client=client,
         )
         self.client = self.core_client.client
-        self._request_metadata: ContextVar[dict[str, Any] | None] = ContextVar(
-            "openai_compatible_request_metadata",
-            default=None,
-        )
 
     def _record_error(self, error: Exception, attempts: int) -> None:
         recorder = default_recorder()
@@ -242,9 +237,6 @@ class OpenAICompatibleCompletionFn(CompletionFn):
 
     def __call__(self, prompt: Any, **kwargs: Any) -> OpenAICompatibleCompletionResult:
         messages = _prompt_to_messages(prompt)
-        request_metadata = {
-            key: value for key, value in kwargs.items() if key not in {"model", "messages"}
-        }
         request_options = {
             key: value
             for key, value in kwargs.items()
@@ -257,20 +249,16 @@ class OpenAICompatibleCompletionFn(CompletionFn):
             max_tokens=kwargs.get("max_tokens"),
             options=request_options,
         )
-        token = self._request_metadata.set(request_metadata)
         try:
-            try:
-                response = self.complete_core(request)
-            except EmptyCompletionError as error:
-                return OpenAICompatibleCompletionResult(
-                    error.raw_response,
-                    messages,
-                    [],
-                    error=error,
-                    retry_count=error.retry_count,
-                )
-        finally:
-            self._request_metadata.reset(token)
+            response = self.complete_core(request)
+        except EmptyCompletionError as error:
+            return OpenAICompatibleCompletionResult(
+                error.raw_response,
+                messages,
+                [],
+                error=error,
+                retry_count=error.retry_count,
+            )
 
         completions = _extract_completions(response.raw_response) or [response.text]
         return OpenAICompatibleCompletionResult(
@@ -311,6 +299,13 @@ class OpenAICompatibleCompletionFn(CompletionFn):
             response.raw_response,
             completions,
             latency=response.latency,
-            request_metadata=self._request_metadata.get() or {},
+            request_metadata={
+                key: value
+                for key, value in {
+                    "temperature": request.temperature,
+                    "max_tokens": request.max_tokens,
+                }.items()
+                if value is not None
+            },
         )
         return response

@@ -297,7 +297,12 @@ def test_complete_core_forwards_events_and_records_the_shared_response():
         "request_started",
         "request_completed",
     ]
-    assert len(test_recorder.get_events("sampling")) == 1
+    sampling_events = test_recorder.get_events("sampling")
+    assert len(sampling_events) == 1
+    assert sampling_events[0].data["request_metadata"] == {
+        "temperature": 0.0,
+        "max_tokens": 1,
+    }
 
 
 def test_empty_content_is_retried_then_returned():
