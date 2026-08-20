@@ -1,4 +1,4 @@
-"""Minimal MedQA evaluation implemented on top of ``evals.Eval``."""
+"""MedQA CLI evaluation backed by the shared evaluation core."""
 
 import random
 import time
@@ -7,36 +7,27 @@ from datetime import datetime, timezone
 import evals
 from evals.record import record_match
 
+from medical_evals.core.medqa import (
+    aggregate_medqa,
+    build_medqa_prompt,
+    evaluate_medqa_sample,
+)
 from medical_evals.datasets.medqa import OPTION_KEYS, load_medqa_samples
-from medical_evals.graders.choice_parser import parse_choice
-from medical_evals.metrics.medical_qa import get_accuracy, get_parse_success_rate
+
+from .completion_client import CompletionFnModelClient
 
 
-def build_prompt(sample: dict) -> str:
-    """Build a MedQA prompt without exposing the reference answer."""
-    lines = [
-        "请回答下面的医学单项选择题。",
-        f"题目：{sample['question']}",
-        "选项：",
-    ]
-    lines.extend(f"{key}. {sample['options'][key]}" for key in OPTION_KEYS)
-    lines.extend(
-        [
-            "要求：",
-            "不要输出解释、推理过程、答案文字、标点符号、Markdown 或其他内容。",
-            "请只输出一个选项字母（A、B、C 或 D）。",
-        ]
-    )
-    return "\n".join(lines)
+build_prompt = build_medqa_prompt
 
 
 class MedQAEval(evals.Eval):
-    """Evaluate a model on four-option MedQA samples."""
+    """Evaluate four-option MedQA samples through the shared core."""
 
     def __init__(self, *args, temperature: float = 0.1, max_tokens: int = 5120, **kwargs):
         super().__init__(*args, **kwargs)
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.model_client = CompletionFnModelClient(self.completion_fn)
 
     def _model_name(self, recorder) -> str | None:
         """Get the actual model from sampling data, with an adapter fallback."""
@@ -44,7 +35,7 @@ class MedQAEval(evals.Eval):
             model = event.data.get("model")
             if model:
                 return str(model)
-        model = getattr(self.completion_fn, "model", None)
+        model = self.model_client.model
         return str(model) if model else None
 
     def run(self, recorder):
@@ -52,7 +43,7 @@ class MedQAEval(evals.Eval):
         started_clock = time.perf_counter()
         try:
             samples = load_medqa_samples(self._get_samples_path())
-            self.eval_all_samples(recorder, samples, show_progress=False)
+            sample_results = self.eval_all_samples(recorder, samples, show_progress=False)
         except Exception as error:
             match_events = recorder.get_events("match")
             recorder.record_final_report(
@@ -71,37 +62,38 @@ class MedQAEval(evals.Eval):
             )
             raise
 
-        match_events = recorder.get_events("match")
+        summary = aggregate_medqa(sample_results)
         return {
-            "accuracy": get_accuracy(match_events),
-            "parse_success_rate": get_parse_success_rate(match_events),
+            "accuracy": summary.total_score,
+            "parse_success_rate": summary.parse_success_rate,
             "status": "completed",
             "started_at": started_at,
             "finished_at": datetime.now(timezone.utc).isoformat(),
             "duration_seconds": time.perf_counter() - started_clock,
-            "sample_count": len(match_events),
-            "completed_count": len(match_events),
-            "failed_count": len(recorder.get_events("error")),
+            "sample_count": summary.total_count,
+            "completed_count": summary.total_count,
+            "failed_count": summary.failed_count,
             "model": self._model_name(recorder),
         }
 
     def eval_sample(self, sample: dict, rng: random.Random):
         del rng
-        prompt = build_prompt(sample)
-        result = self.completion_fn(
-            prompt=prompt,
+        result = evaluate_medqa_sample(
+            self.model_client,
+            sample,
+            model=self.model_client.model or "",
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
-        completions = result.get_completions()
-        sampled = completions[0] if completions else ""
-        picked = parse_choice(sampled)
-
         record_match(
-            picked == sample["answer"],
-            expected=sample["answer"],
-            picked=picked,
-            sampled=sampled,
+            result.correct,
+            expected=result.expected,
+            picked=result.predicted,
+            sampled=result.raw_output,
             options=list(OPTION_KEYS),
+            parse_failed=result.parse_failed,
+            retry_count=result.retry_count,
+            error=result.error.message if result.error else None,
+            error_category=result.error.category if result.error else None,
         )
-        return {"picked": picked, "correct": picked == sample["answer"]}
+        return result

@@ -13,6 +13,7 @@ from evals.cli import oaieval
 from evals.record import DummyRecorder
 from evals.registry import Registry
 from medical_evals.adapters import OpenAICompatibleCompletionFn
+from medical_evals.core.models import CompletionRequest, EvaluationEvent, ModelResponse
 from medical_evals.evals import MedQAEval
 
 
@@ -29,6 +30,22 @@ class FakeChatCompletions:
 class FakeOpenAIClient:
     def __init__(self, response):
         self.chat = SimpleNamespace(completions=FakeChatCompletions(response))
+
+
+class CoreOnlyCompletionFn:
+    model = "core-only-model"
+
+    def __init__(self):
+        self.requests = []
+
+    def __call__(self, prompt, **kwargs):
+        raise AssertionError("legacy completion call should not be used")
+
+    def complete_core(self, request: CompletionRequest, on_event=None) -> ModelResponse:
+        self.requests.append(request)
+        if on_event is not None:
+            on_event(EvaluationEvent(kind="retry", stage="request", attempt=1))
+        return ModelResponse(text="C", model=self.model, retry_count=1)
 
 
 def write_medqa_sample(path: Path) -> None:
@@ -111,6 +128,29 @@ def test_medqa_pipeline_records_one_sampling_and_one_match(tmp_path, monkeypatch
     assert result["parse_success_rate"] == 1.0
 
 
+def test_medqa_pipeline_prefers_the_shared_completion_client(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVALS_SEQUENTIAL", "1")
+    dataset_path = tmp_path / "medqa.jsonl"
+    write_medqa_sample(dataset_path)
+    completion_fn = CoreOnlyCompletionFn()
+    evaluation = MedQAEval(
+        completion_fns=[completion_fn],
+        eval_registry_path=tmp_path,
+        name="medical-medqa.dev.v1",
+        samples_jsonl=str(dataset_path),
+        temperature=0.2,
+        max_tokens=512,
+    )
+
+    result = evaluation.run(make_recorder())
+
+    assert len(completion_fn.requests) == 1
+    assert completion_fn.requests[0].temperature == 0.2
+    assert completion_fn.requests[0].max_tokens == 512
+    assert result["accuracy"] == 1.0
+    assert result["model"] == "core-only-model"
+
+
 def test_registry_loads_medqa_pipeline_definition():
     registry = Registry([Path("registry")])
 
@@ -141,7 +181,7 @@ def test_oaieval_runner_loads_registered_completion_fn(tmp_path, monkeypatch):
     )
     fake_client = FakeOpenAIClient(fake_response)
     monkeypatch.setattr(
-        "medical_evals.adapters.openai_compatible.OpenAI",
+        "medical_evals.core.openai_compatible.OpenAI",
         lambda **_: fake_client,
     )
 

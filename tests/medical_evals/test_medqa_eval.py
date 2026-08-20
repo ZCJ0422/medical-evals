@@ -3,8 +3,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from evals.base import RunSpec
 from evals.record import DummyRecorder, record_sampling
 from evals.registry import Registry
@@ -51,15 +49,6 @@ class RecordingPresetCompletionFn(PresetCompletionFn):
 class FailingCompletionFn:
     def __call__(self, prompt, **kwargs):
         raise RuntimeError("simulated rate limit")
-
-
-class ReportCapturingRecorder(DummyRecorder):
-    def __init__(self, run_spec):
-        super().__init__(run_spec=run_spec, log=False)
-        self.final_reports = []
-
-    def record_final_report(self, final_report):
-        self.final_reports.append(final_report)
 
 
 def write_jsonl(path, rows):
@@ -179,12 +168,12 @@ def test_medqa_eval_reports_model_name(tmp_path, monkeypatch):
     assert result["model"] == "test-model"
 
 
-def test_medqa_eval_records_failed_run_duration_before_reraising(tmp_path, monkeypatch):
+def test_medqa_eval_normalizes_request_failure_into_match_result(tmp_path, monkeypatch):
     monkeypatch.setenv("EVALS_SEQUENTIAL", "1")
     path = tmp_path / "samples.jsonl"
     write_jsonl(path, [make_sample("题目一", "C")])
     run_spec = make_eval(path, FailingCompletionFn())[1].run_spec
-    recorder = ReportCapturingRecorder(run_spec)
+    recorder = DummyRecorder(run_spec=run_spec, log=False)
     evaluation = MedQAEval(
         completion_fns=[FailingCompletionFn()],
         eval_registry_path=path.parent,
@@ -192,15 +181,19 @@ def test_medqa_eval_records_failed_run_duration_before_reraising(tmp_path, monke
         samples_jsonl=str(path),
     )
 
-    with pytest.raises(RuntimeError, match="simulated rate limit"):
-        evaluation.run(recorder)
+    result = evaluation.run(recorder)
 
-    assert len(recorder.final_reports) == 1
-    report = recorder.final_reports[0]
-    assert report["status"] == "failed"
-    assert report["error_type"] == "RuntimeError"
-    assert report["duration_seconds"] >= 0
-    assert report["completed_count"] == 0
+    assert result["status"] == "completed"
+    assert result["sample_count"] == 1
+    assert result["completed_count"] == 1
+    assert result["failed_count"] == 1
+    assert result["accuracy"] == 0.0
+    assert result["parse_success_rate"] == 0.0
+    match = recorder.get_events("match")[0].data
+    assert match["correct"] is False
+    assert match["parse_failed"] is False
+    assert match["error"] == "simulated rate limit"
+    assert match["error_category"] == "request_error"
 
 
 def test_medqa_eval_forwards_configured_generation_parameters(tmp_path, monkeypatch):
