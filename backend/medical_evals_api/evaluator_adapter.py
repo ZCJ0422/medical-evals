@@ -7,8 +7,12 @@ from .schemas.common import TaskProgress
 from .openai_compatible import OpenAICompatibleClient
 from .paths import registry_data_path, workspace_dataset_path
 from .secrets import decrypt_secret
-from medical_evals.core.medqa import aggregate_medqa, evaluate_medqa_sample
-from medical_evals.core.models import EvaluationEvent, MedQASampleResult, SampleError
+from medical_evals.core.medqa import (
+    aggregate_medqa,
+    evaluate_medqa_sample,
+    make_safe_medqa_error,
+)
+from medical_evals.core.models import EvaluationEvent, MedQASampleResult
 from medical_evals.datasets.medqa import load_medqa_samples
 from medical_evals.datasets.healthbench import load_healthbench_samples
 from medical_evals.judges.rubric import build_rubric_judge_prompt, parse_rubric_judgment
@@ -26,7 +30,7 @@ def serialize_medqa_result(
 ) -> dict:
     """Convert a shared MedQA result to the stable Workbench artifact schema."""
     error = result.error
-    return {
+    record = {
         "index": index,
         "sample_id": result.sample_id or str(sample.get("id", index)),
         "question": sample["question"],
@@ -35,10 +39,28 @@ def serialize_medqa_result(
         "correct": result.correct,
         "parse_failed": result.parse_failed,
         "raw_output": result.raw_output,
-        "error": error.message if error else None,
-        "error_category": error.category if error else None,
+        "error": None,
+        "error_category": None,
         "retry_count": result.retry_count,
     }
+    if error is not None:
+        safe_error = make_safe_medqa_error(
+            category=error.category,
+            stage=error.stage,
+            retry_count=error.retry_count,
+            status_code=error.status_code,
+            attempt=error.attempt,
+        )
+        record.update(
+            {
+                "error": safe_error.message,
+                "error_category": safe_error.category,
+                "error_stage": safe_error.stage,
+                "error_status_code": safe_error.status_code,
+                "error_attempt": safe_error.attempt,
+            }
+        )
+    return record
 
 
 def deserialize_medqa_record(record: dict) -> MedQASampleResult:
@@ -47,11 +69,12 @@ def deserialize_medqa_record(record: dict) -> MedQASampleResult:
     error_message = record.get("error")
     error = None
     if error_message:
-        error = SampleError(
+        error = make_safe_medqa_error(
             category=str(record.get("error_category") or "request_error"),
-            message=str(error_message),
-            stage="request",
             retry_count=retry_count,
+            stage=record.get("error_stage", "request"),
+            status_code=record.get("error_status_code"),
+            attempt=record.get("error_attempt"),
         )
     predicted = record.get("predicted")
     expected = str(record.get("expected", ""))
@@ -279,6 +302,16 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
         samples = load_medqa_samples(registry_data_path("medical_medqa", "dev.jsonl"))
         if task.max_samples:
             samples = samples[:task.max_samples]
+        on_progress(
+            TaskProgress(
+                completed_count=0,
+                total_count=len(samples),
+                progress_percent=0,
+                success_count=0,
+                failed_count=0,
+                retry_count=0,
+            )
+        )
         target = self.target_client or OpenAICompatibleClient(
             task.target_base_url,
             decrypt_secret(task.target_api_key_enc),

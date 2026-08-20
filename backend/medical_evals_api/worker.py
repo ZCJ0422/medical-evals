@@ -49,7 +49,7 @@ class Worker:
         setattr(self.adapter, "on_stage", update_stage)
         if hasattr(self.adapter, "on_sample"):
             def record_sample(sample):
-                artifacts.append_sample(sample)
+                artifacts.upsert_sample(sample)
                 if sample.get("error"):
                     artifacts.log(f"[sample {int(sample.get('index', 0)) + 1}] failed: {sample['error']}")
                 else:

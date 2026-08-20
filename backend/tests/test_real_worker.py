@@ -1,6 +1,12 @@
+import json
+
+import httpx
+
 from medical_evals.core.models import CompletionRequest, ModelResponse
+from medical_evals_api.artifacts import ArtifactWriter
 from medical_evals_api.evaluator_adapter import OpenAICompatibleEvaluationAdapter
 from medical_evals_api.models import EvaluationTask
+from medical_evals_api.openai_compatible import OpenAICompatibleClient
 from medical_evals_api.repositories.tasks import TaskRepository
 from medical_evals_api.schemas.common import TaskStatus
 from medical_evals_api.worker import Worker
@@ -34,6 +40,20 @@ class RetryCountingClient:
     def complete(self, request, on_event=None):
         assert isinstance(request, CompletionRequest)
         return ModelResponse(text="C", retry_count=1)
+
+
+class SensitiveProviderError(RuntimeError):
+    status_code = 503
+
+
+class NeverCalledClient:
+    def __init__(self):
+        self.calls = 0
+
+    def complete(self, request, on_event=None):
+        del request, on_event
+        self.calls += 1
+        raise AssertionError("a cancellation before the first sample must not call the model")
 
 
 def test_worker_runs_medqa_with_openai_compatible_adapter(tmp_path):
@@ -81,3 +101,171 @@ def test_medqa_worker_persists_client_retry_count(tmp_path, monkeypatch):
     assert saved["retry_count"] == 1
     records = (tmp_path / "artifacts" / task.task_id / "samples.jsonl").read_text(encoding="utf-8")
     assert '"retry_count": 1' in records
+
+
+def test_medqa_worker_redacts_provider_secrets_from_artifacts_and_logs(tmp_path):
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(
+        name="redaction",
+        target_model_id="target",
+        judge_model_id="",
+        dataset_version_id="medical-medqa.dev.v1",
+        rubric_id="medical-medqa.default",
+        max_samples=1,
+    )
+    api_key = "redaction-worker-api-key"
+    userinfo = "redaction-worker-userinfo"
+    provider_body = "redaction-worker-provider-body"
+    secrets = (api_key, userinfo, provider_body)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        raise SensitiveProviderError(
+            "Authorization: Bearer redaction-worker-api-key; "
+            "url=https://alice:redaction-worker-userinfo@example.test/callback; "
+            "provider_body=redaction-worker-provider-body"
+        )
+
+    client = OpenAICompatibleClient(
+        "https://example.test/v1",
+        api_key,
+        transport=httpx.MockTransport(handler),
+        max_retries=0,
+        sleep_fn=lambda _: None,
+    )
+
+    result = Worker(
+        repo,
+        adapter=OpenAICompatibleEvaluationAdapter(target_client=client),
+    ).run_task(task.task_id)
+
+    artifacts = tmp_path / "artifacts" / task.task_id
+    samples_text = (artifacts / "samples.jsonl").read_text(encoding="utf-8")
+    log_text = (artifacts / "run.log").read_text(encoding="utf-8")
+    assert result.status == TaskStatus.PARTIAL_FAILED
+    assert all(secret not in samples_text for secret in secrets)
+    assert all(secret not in log_text for secret in secrets)
+    record = json.loads(samples_text)
+    assert record["error"] == "request failed: request_error"
+    assert record["error_category"] == "request_error"
+    assert record["error_stage"] == "request"
+    assert record["error_status_code"] == 503
+    assert record["error_attempt"] == 1
+
+
+def test_medqa_worker_keeps_selected_total_when_cancelled_before_first_sample(
+    tmp_path, monkeypatch
+):
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(
+        name="cancel before first sample",
+        target_model_id="target",
+        judge_model_id="",
+        dataset_version_id="medical-medqa.dev.v1",
+        rubric_id="medical-medqa.default",
+        max_samples=2,
+    )
+    samples = [
+        {
+            "id": f"sample-{index}",
+            "question": f"question-{index}",
+            "options": {"A": "a", "B": "b", "C": "c", "D": "d"},
+            "answer": "C",
+        }
+        for index in range(3)
+    ]
+
+    def load_then_cancel(_):
+        repo.set_status(task.task_id, TaskStatus.CANCELLED)
+        return samples
+
+    monkeypatch.setattr(
+        "medical_evals_api.evaluator_adapter.load_medqa_samples", load_then_cancel
+    )
+    client = NeverCalledClient()
+
+    result = Worker(
+        repo,
+        adapter=OpenAICompatibleEvaluationAdapter(target_client=client),
+    ).run_task(task.task_id)
+
+    assert result.status == TaskStatus.CANCELLED
+    assert result.progress.total_count == 2
+    assert result.progress.completed_count == 0
+    assert result.progress.progress_percent == 0
+    assert result.progress.stage == "preparing"
+    assert client.calls == 0
+
+
+def test_medqa_worker_restores_checkpoint_artifact_and_sample_order_by_index(
+    tmp_path, monkeypatch
+):
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(
+        name="ordered checkpoint resume",
+        target_model_id="target",
+        judge_model_id="",
+        dataset_version_id="medical-medqa.dev.v1",
+        rubric_id="medical-medqa.default",
+        max_samples=2,
+    )
+    samples = [
+        {
+            "id": f"sample-{index}",
+            "question": f"question-{index}",
+            "options": {"A": "a", "B": "b", "C": "c", "D": "d"},
+            "answer": "C",
+        }
+        for index in range(2)
+    ]
+    writer = ArtifactWriter(tmp_path / "artifacts", task.task_id)
+    writer.append_sample(
+        {
+            "index": 0,
+            "sample_id": "sample-0",
+            "question": "question-0",
+            "expected": "C",
+            "predicted": None,
+            "correct": False,
+            "parse_failed": False,
+            "raw_output": "",
+            "error": "previous failure",
+            "error_category": "request_error",
+            "retry_count": 0,
+        }
+    )
+    writer.append_sample(
+        {
+            "index": 1,
+            "sample_id": "sample-1",
+            "question": "question-1",
+            "expected": "C",
+            "predicted": "C",
+            "correct": True,
+            "parse_failed": False,
+            "raw_output": "C",
+            "error": None,
+            "error_category": None,
+            "retry_count": 0,
+        }
+    )
+    monkeypatch.setattr(
+        "medical_evals_api.evaluator_adapter.load_medqa_samples", lambda _: samples
+    )
+
+    result = Worker(
+        repo,
+        adapter=OpenAICompatibleEvaluationAdapter(target_client=CorrectAnswerClient()),
+    ).run_task(task.task_id)
+
+    artifact_records = [
+        json.loads(line)
+        for line in (tmp_path / "artifacts" / task.task_id / "samples.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    api_records, total = repo.get_samples(task.task_id)
+    assert result.status == TaskStatus.COMPLETED
+    assert [record["index"] for record in artifact_records] == [0, 1]
+    assert [record["index"] for record in api_records] == [0, 1]
+    assert total == 2

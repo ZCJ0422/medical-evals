@@ -26,8 +26,21 @@ class RetryingFailureClient:
         if on_event is not None:
             on_event(EvaluationEvent(kind="retry", stage="request", attempt=1))
             on_event(EvaluationEvent(kind="retry", stage="request", attempt=2))
-        error = RuntimeError("request timed out")
+            on_event(
+                EvaluationEvent(
+                    kind="request_failed",
+                    stage="request",
+                    attempt=3,
+                    category="timeout_error",
+                )
+            )
+        error = RuntimeError(
+            "Authorization: Bearer redaction-test-token; "
+            "url=https://alice:redaction-test-userinfo@example.test; "
+            "provider_body=redaction-test-body"
+        )
         error.is_timeout = True
+        error.status_code = 503
         raise error
 
 
@@ -52,7 +65,7 @@ def test_medqa_parse_failure_is_not_a_request_failure():
     assert aggregate_medqa([result]).failed_count == 0
 
 
-def test_medqa_request_exception_returns_normalized_failed_result():
+def test_medqa_request_exception_returns_a_safe_normalized_failed_result():
     result = evaluate_medqa_sample(RetryingFailureClient(), MEDQA_SAMPLE, model="model-a")
 
     assert result.correct is False
@@ -60,7 +73,13 @@ def test_medqa_request_exception_returns_normalized_failed_result():
     assert result.retry_count == 2
     assert result.error is not None
     assert result.error.category == "timeout_error"
-    assert result.error.message == "request timed out"
+    assert result.error.message == "request failed: timeout_error"
+    assert result.error.stage == "request"
+    assert result.error.status_code == 503
+    assert result.error.attempt == 3
+    assert "redaction-test-token" not in result.error.message
+    assert "redaction-test-userinfo" not in result.error.message
+    assert "redaction-test-body" not in result.error.message
 
 
 def test_medqa_aggregate_counts_request_and_parse_failures_as_incorrect():
@@ -84,3 +103,21 @@ def test_medqa_aggregate_counts_request_and_parse_failures_as_incorrect():
     assert summary.parse_success_rate == 1 / 2
     assert summary.retry_count == 2
     assert summary.error_categories == {"timeout_error": 1}
+
+
+def test_medqa_aggregate_returns_none_for_an_empty_result_set():
+    summary = aggregate_medqa([])
+
+    assert summary.request_success_count == 0
+    assert summary.parse_success_rate is None
+
+
+def test_medqa_aggregate_returns_none_when_every_request_fails():
+    failed = evaluate_medqa_sample(
+        RetryingFailureClient(), MEDQA_SAMPLE, model="model-a"
+    )
+
+    summary = aggregate_medqa([failed])
+
+    assert summary.request_success_count == 0
+    assert summary.parse_success_rate is None

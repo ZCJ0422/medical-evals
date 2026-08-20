@@ -188,11 +188,11 @@ def test_medqa_eval_normalizes_request_failure_into_match_result(tmp_path, monke
     assert result["completed_count"] == 1
     assert result["failed_count"] == 1
     assert result["accuracy"] == 0.0
-    assert result["parse_success_rate"] == 0.0
+    assert result["parse_success_rate"] is None
     match = recorder.get_events("match")[0].data
     assert match["correct"] is False
     assert match["parse_failed"] is False
-    assert match["error"] == "simulated rate limit"
+    assert match["error"] == "request failed: request_error"
     assert match["error_category"] == "request_error"
 
 

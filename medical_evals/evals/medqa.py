@@ -11,6 +11,7 @@ from medical_evals.core.medqa import (
     aggregate_medqa,
     build_medqa_prompt,
     evaluate_medqa_sample,
+    make_safe_medqa_error,
 )
 from medical_evals.datasets.medqa import OPTION_KEYS, load_medqa_samples
 
@@ -85,15 +86,32 @@ class MedQAEval(evals.Eval):
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
-        record_match(
-            result.correct,
-            expected=result.expected,
-            picked=result.predicted,
-            sampled=result.raw_output,
-            options=list(OPTION_KEYS),
-            parse_failed=result.parse_failed,
-            retry_count=result.retry_count,
-            error=result.error.message if result.error else None,
-            error_category=result.error.category if result.error else None,
-        )
+        match_data = {
+            "expected": result.expected,
+            "picked": result.predicted,
+            "sampled": result.raw_output,
+            "options": list(OPTION_KEYS),
+            "parse_failed": result.parse_failed,
+            "retry_count": result.retry_count,
+            "error": None,
+            "error_category": None,
+        }
+        if result.error is not None:
+            error = make_safe_medqa_error(
+                category=result.error.category,
+                stage=result.error.stage,
+                retry_count=result.error.retry_count,
+                status_code=result.error.status_code,
+                attempt=result.error.attempt,
+            )
+            match_data.update(
+                {
+                    "error": error.message,
+                    "error_category": error.category,
+                    "error_stage": error.stage,
+                    "error_status_code": error.status_code,
+                    "error_attempt": error.attempt,
+                }
+            )
+        record_match(result.correct, **match_data)
         return result

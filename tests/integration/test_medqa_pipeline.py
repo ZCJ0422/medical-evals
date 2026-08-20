@@ -8,10 +8,12 @@ from types import SimpleNamespace
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 import evals.eval as eval_module
+import httpx
 from evals.base import RunSpec
 from evals.cli import oaieval
 from evals.record import DummyRecorder
 from evals.registry import Registry
+from openai import APIStatusError
 from medical_evals.adapters import OpenAICompatibleCompletionFn
 from medical_evals.core.models import CompletionRequest, EvaluationEvent, ModelResponse
 from medical_evals.evals import MedQAEval
@@ -24,6 +26,8 @@ class FakeChatCompletions:
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
+        if isinstance(self.response, Exception):
+            raise self.response
         return self.response
 
 
@@ -152,6 +156,55 @@ def test_medqa_pipeline_prefers_the_shared_completion_client(tmp_path, monkeypat
     assert completion_fn.requests[0].max_tokens == 512
     assert result["accuracy"] == 1.0
     assert result["model"] == "core-only-model"
+
+
+def test_medqa_cli_recorder_and_match_redact_provider_secrets(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVALS_SEQUENTIAL", "1")
+    dataset_path = tmp_path / "medqa.jsonl"
+    write_medqa_sample(dataset_path)
+    api_key = "redaction-cli-api-key"
+    userinfo = "redaction-cli-userinfo"
+    provider_body = "redaction-cli-provider-body"
+    secrets = (api_key, userinfo, provider_body)
+    provider_error = APIStatusError(
+        "Authorization: Bearer redaction-cli-api-key; "
+        "url=https://alice:redaction-cli-userinfo@example.test/callback; "
+        "provider_body=redaction-cli-provider-body",
+        response=httpx.Response(
+            401,
+            request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+        ),
+        body={"error": {"message": provider_body}},
+    )
+    completion_fn = OpenAICompatibleCompletionFn(
+        api_key=api_key,
+        model="fake-medical-model",
+        client=FakeOpenAIClient(provider_error),
+        max_retries=0,
+    )
+    recorder = make_recorder()
+    evaluation = MedQAEval(
+        completion_fns=[completion_fn],
+        eval_registry_path=tmp_path,
+        name="medical-medqa.dev.v1",
+        samples_jsonl=str(dataset_path),
+    )
+
+    result = evaluation.run(recorder)
+
+    assert result["failed_count"] == 1
+    persisted_events = [
+        event.data
+        for event_type in ("error", "match")
+        for event in recorder.get_events(event_type)
+    ]
+    assert all(secret not in str(event) for secret in secrets for event in persisted_events)
+    match = recorder.get_events("match")[0].data
+    assert match["error"] == "request failed: authentication_error"
+    assert match["error_category"] == "authentication_error"
+    assert match["error_stage"] == "request"
+    assert match["error_status_code"] == 401
+    assert match["error_attempt"] == 1
 
 
 def test_registry_loads_medqa_pipeline_definition():

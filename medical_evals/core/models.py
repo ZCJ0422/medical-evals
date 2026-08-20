@@ -41,6 +41,8 @@ class SampleError:
     message: str
     stage: str
     retry_count: int = 0
+    status_code: int | None = None
+    attempt: int = 1
 
 
 @dataclass(frozen=True)

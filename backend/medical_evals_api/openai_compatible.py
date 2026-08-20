@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -31,7 +32,13 @@ class _HTTPXCompletions:
                 json=payload,
             )
             response.raise_for_status()
-            return response.json()
+            try:
+                return response.json()
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                # The shared client owns retry policy. An invalid successful
+                # response is represented as an empty completion so it takes
+                # the same retry path as blank or choice-less responses.
+                return {"choices": []}
         except httpx.TimeoutException as error:
             error.is_timeout = True
             raise

@@ -43,7 +43,10 @@ def _messages(prompt: Any) -> list[dict[str, Any]]:
 
 
 def _completion_text(response: Any) -> str | None:
-    for choice in _field(response, "choices", []) or []:
+    choices = _field(response, "choices", [])
+    if not isinstance(choices, (list, tuple)):
+        return None
+    for choice in choices:
         message = _field(choice, "message")
         content = _field(message, "content")
         if content is not None and str(content).strip():

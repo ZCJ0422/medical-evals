@@ -102,11 +102,12 @@ max_tokens: 2048
 
 ```text
 accuracy = 正确题数 / match 事件数
-parse_success_rate = 成功解析出选项的题数 / match 事件数
+parse_success_rate = 成功解析出选项的题数 / 请求成功的题数
 ```
 
-没有样本时两个指标均返回 `0.0`。无法解析的回答会降低
-`parse_success_rate`，且不会被视为正确答案。
+没有样本时 `accuracy` 返回 `0.0`。当没有任何请求成功（包括空数据集或所有
+请求都失败）时，`parse_success_rate` 没有可用分母，返回 `None`（JSON API 中为
+`null`）。无法解析的回答会降低 `parse_success_rate`，且不会被视为正确答案。
 
 ## 5. 运行方式
 

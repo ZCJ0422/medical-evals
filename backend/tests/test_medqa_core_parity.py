@@ -115,8 +115,11 @@ def test_medqa_result_serialization_covers_success_parse_and_request_failure():
             "correct": False,
             "parse_failed": False,
             "raw_output": "",
-            "error": "connection lost",
+            "error": "request failed: network_error",
             "error_category": "network_error",
+            "error_stage": "request",
+            "error_status_code": None,
+            "error_attempt": 3,
             "retry_count": 2,
         },
     ]

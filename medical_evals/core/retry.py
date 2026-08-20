@@ -6,6 +6,17 @@ from collections.abc import Iterator
 from typing import Any
 
 RETRYABLE_STATUS_CODES = frozenset({408, 409, 429, 500, 502, 503, 504})
+SAFE_ERROR_CATEGORIES = frozenset(
+    {
+        "timeout_error",
+        "network_error",
+        "rate_limit_error",
+        "authentication_error",
+        "model_or_endpoint_error",
+        "request_error",
+        "empty_completion",
+    }
+)
 
 
 def classify_status_code(status_code: int) -> tuple[str, bool]:
@@ -33,7 +44,15 @@ def _is_flagged(error: BaseException, names: tuple[str, ...]) -> bool:
     return any(value is True for value in _attribute_values(error, names))
 
 
-def _status_code(error: BaseException) -> int | None:
+def normalize_error_category(category: object) -> str:
+    """Return a canonical category suitable for logs and persisted results."""
+    if isinstance(category, str) and category in SAFE_ERROR_CATEGORIES:
+        return category
+    return "request_error"
+
+
+def status_code_for_error(error: BaseException) -> int | None:
+    """Return a valid HTTP status code without serializing provider text."""
     candidates: list[Any] = list(
         _attribute_values(error, ("status_code", "status"))
     )
@@ -44,9 +63,11 @@ def _status_code(error: BaseException) -> int | None:
         )
     for candidate in candidates:
         try:
-            return int(candidate)
+            status_code = int(candidate)
         except (TypeError, ValueError):
             continue
+        if 100 <= status_code <= 599:
+            return status_code
     return None
 
 
@@ -69,9 +90,9 @@ def classify_error(error: BaseException) -> tuple[str, bool]:
     category = getattr(error, "category", None)
     retryable = getattr(error, "retryable", None)
     if isinstance(category, str) and isinstance(retryable, bool):
-        return category, retryable
+        return normalize_error_category(category), retryable
 
-    status_code = _status_code(error)
+    status_code = status_code_for_error(error)
     if status_code is not None:
         return classify_status_code(status_code)
 

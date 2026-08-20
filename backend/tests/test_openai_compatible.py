@@ -151,3 +151,50 @@ def test_backend_wrapper_accepts_core_requests_and_forwards_retry_events():
         "request_completed",
     ]
     assert all("secret-key" not in (event.message or "") for event in events)
+
+
+@pytest.mark.parametrize(
+    "invalid_response",
+    [
+        pytest.param(lambda: httpx.Response(200, content=b""), id="empty-2xx-body"),
+        pytest.param(
+            lambda: httpx.Response(200, content=b"not valid json"),
+            id="non-json-2xx-body",
+        ),
+        pytest.param(
+            lambda: httpx.Response(200, json={"choices": 7}),
+            id="malformed-choices",
+        ),
+    ],
+)
+def test_backend_wrapper_retries_2xx_responses_without_a_usable_completion(
+    invalid_response,
+):
+    calls = []
+    sleeps = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if len(calls) < 3:
+            return invalid_response()
+        return httpx.Response(
+            200,
+            json={"model": "model", "choices": [{"message": {"content": "A"}}]},
+        )
+
+    client = OpenAICompatibleClient(
+        "https://example.test/v1",
+        "secret-key",
+        transport=httpx.MockTransport(handler),
+        max_retries=2,
+        retry_base_seconds=1.0,
+        sleep_fn=sleeps.append,
+    )
+
+    result = client.complete(CompletionRequest("question", "model", 0.1, 10))
+
+    assert isinstance(result, ModelResponse)
+    assert result.text == "A"
+    assert result.retry_count == 2
+    assert len(calls) == 3
+    assert sleeps == [1.0, 2.0]
