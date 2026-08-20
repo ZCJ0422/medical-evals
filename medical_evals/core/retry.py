@@ -66,14 +66,15 @@ def classify_error(error: BaseException) -> tuple[str, bool]:
     ):
         return "network_error", True
 
-    status_code = _status_code(error)
-    if status_code is not None:
-        return classify_status_code(status_code)
-
     category = getattr(error, "category", None)
     retryable = getattr(error, "retryable", None)
     if isinstance(category, str) and isinstance(retryable, bool):
         return category, retryable
+
+    status_code = _status_code(error)
+    if status_code is not None:
+        return classify_status_code(status_code)
+
     if retryable is True:
         return "request_error", True
     return "request_error", False

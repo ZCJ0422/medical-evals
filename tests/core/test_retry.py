@@ -41,3 +41,13 @@ def test_classify_error_uses_nested_status_code_without_provider_imports():
 
     assert classify_error(error) == ("authentication_error", False)
     assert is_retryable_error(error) is False
+
+
+def test_normalized_error_pair_precedes_status_code_fallback():
+    error = SimpleNamespace(
+        status_code=503,
+        category="authentication_error",
+        retryable=False,
+    )
+
+    assert classify_error(error) == ("authentication_error", False)
