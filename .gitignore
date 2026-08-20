@@ -57,6 +57,10 @@ frontend/playwright-report/
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
 
+# Local isolated worktrees and subagent execution ledgers.
+.worktrees/
+.superpowers/
+
 # Full HealthBench JSONL files are local benchmark inputs. Keep only the
 # small registered smoke fixture under registry/data/ in Git.
 dataset/HealthBench/
