@@ -197,6 +197,104 @@ def test_medqa_worker_keeps_selected_total_when_cancelled_before_first_sample(
     assert client.calls == 0
 
 
+def test_medqa_resume_preserves_checkpoint_progress_when_cancelled_before_first_sample(
+    tmp_path, monkeypatch
+):
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(
+        name="resume then cancel before first sample",
+        target_model_id="target",
+        judge_model_id="",
+        dataset_version_id="medical-medqa.dev.v1",
+        rubric_id="medical-medqa.default",
+        max_samples=2,
+    )
+    ArtifactWriter(tmp_path / "artifacts", task.task_id).append_sample(
+        {
+            "index": 0,
+            "sample_id": "sample-0",
+            "question": "question-0",
+            "expected": "C",
+            "predicted": "C",
+            "correct": True,
+            "parse_failed": False,
+            "raw_output": "C",
+            "error": None,
+            "error_category": None,
+            "retry_count": 2,
+        }
+    )
+    samples = [
+        {
+            "id": f"sample-{index}",
+            "question": f"question-{index}",
+            "options": {"A": "a", "B": "b", "C": "c", "D": "d"},
+            "answer": "C",
+        }
+        for index in range(2)
+    ]
+
+    def load_then_cancel(_):
+        repo.set_status(task.task_id, TaskStatus.CANCELLED)
+        return samples
+
+    monkeypatch.setattr(
+        "medical_evals_api.evaluator_adapter.load_medqa_samples", load_then_cancel
+    )
+    client = NeverCalledClient()
+
+    result = Worker(
+        repo,
+        adapter=OpenAICompatibleEvaluationAdapter(target_client=client),
+    ).run_task(task.task_id)
+
+    api_records, api_total = repo.get_samples(task.task_id)
+    assert result.status == TaskStatus.CANCELLED
+    assert result.progress.total_count == 2
+    assert result.progress.completed_count == 1
+    assert result.progress.progress_percent == 50
+    assert result.progress.success_count == 1
+    assert result.progress.failed_count == 0
+    assert result.progress.retry_count == 2
+    assert result.progress.stage == "preparing"
+    assert api_total == result.progress.completed_count
+    assert [record["index"] for record in api_records] == [0]
+    assert api_records[0]["retry_count"] == result.progress.retry_count
+    assert client.calls == 0
+
+
+def test_medqa_worker_appends_increasing_indices_without_atomic_rewrite(
+    tmp_path, monkeypatch
+):
+    def fail_atomic_rewrite(*_args, **_kwargs):
+        raise AssertionError("strictly increasing samples must use append persistence")
+
+    monkeypatch.setattr(ArtifactWriter, "_write_samples_atomically", fail_atomic_rewrite)
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(
+        name="ordered MedQA persistence",
+        target_model_id="target",
+        judge_model_id="",
+        dataset_version_id="medical-medqa.dev.v1",
+        rubric_id="medical-medqa.default",
+        max_samples=2,
+    )
+
+    result = Worker(
+        repo,
+        adapter=OpenAICompatibleEvaluationAdapter(target_client=FakeClient()),
+    ).run_task(task.task_id)
+
+    assert result.status == TaskStatus.COMPLETED
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "artifacts" / task.task_id / "samples.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [record["index"] for record in records] == [0, 1]
+
+
 def test_medqa_worker_restores_checkpoint_artifact_and_sample_order_by_index(
     tmp_path, monkeypatch
 ):

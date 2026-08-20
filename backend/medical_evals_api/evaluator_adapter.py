@@ -302,14 +302,31 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
         samples = load_medqa_samples(registry_data_path("medical_medqa", "dev.jsonl"))
         if task.max_samples:
             samples = samples[:task.max_samples]
+        checkpoint = getattr(self, "checkpoint", {})
+        checkpoint_records = {
+            index: record
+            for index, record in checkpoint.items()
+            if 0 <= index < len(samples)
+        }
+        sample_results_by_index = {
+            index: deserialize_medqa_record(record)
+            for index, record in checkpoint_records.items()
+        }
+        initial_summary = aggregate_medqa(
+            [sample_results_by_index[index] for index in sorted(sample_results_by_index)]
+        )
         on_progress(
             TaskProgress(
-                completed_count=0,
+                completed_count=initial_summary.total_count,
                 total_count=len(samples),
-                progress_percent=0,
-                success_count=0,
-                failed_count=0,
-                retry_count=0,
+                progress_percent=(
+                    initial_summary.total_count / len(samples) * 100
+                    if samples
+                    else 0
+                ),
+                success_count=initial_summary.success_count,
+                failed_count=initial_summary.failed_count,
+                retry_count=initial_summary.retry_count,
             )
         )
         target = self.target_client or OpenAICompatibleClient(
@@ -318,22 +335,15 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
             max_retries=2,
             retry_base_seconds=1.0,
         )
-        success = failed = total_retries = 0
-        records = []
-        sample_results = []
-        checkpoint = getattr(self, "checkpoint", {})
+        success = initial_summary.success_count
+        failed = initial_summary.failed_count
+        total_retries = initial_summary.retry_count
+        records_by_index = dict(checkpoint_records)
         for index, sample in enumerate(samples, start=1):
             if is_cancelled():
                 break
-            if index - 1 in checkpoint:
-                record = checkpoint[index - 1]
-                records.append(record)
-                result = deserialize_medqa_record(record)
-                sample_results.append(result)
-                success += int(result.error is None)
-                failed += int(result.error is not None)
-                total_retries += result.retry_count
-                on_progress(TaskProgress(completed_count=index, total_count=len(samples), progress_percent=index / len(samples) * 100, success_count=success, failed_count=failed, retry_count=total_retries))
+            sample_index = index - 1
+            if sample_index in checkpoint_records:
                 continue
             self._log(f"[sample {index}/{len(samples)}] started")
             result = evaluate_medqa_sample(
@@ -354,15 +364,28 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
             else:
                 failed += 1
             total_retries += result.retry_count
-            sample_results.append(result)
-            record = serialize_medqa_result(index - 1, sample, result)
-            records.append(record)
+            sample_results_by_index[sample_index] = result
+            record = serialize_medqa_result(sample_index, sample, result)
+            records_by_index[sample_index] = record
             if self.on_sample:
                 self._stage("saving")
                 self.on_sample(record)
             self._log(f"[sample {index}/{len(samples)}] {'completed' if not record.get('error') else 'failed'}")
-            on_progress(TaskProgress(completed_count=index, total_count=len(samples), progress_percent=index / len(samples) * 100, success_count=success, failed_count=failed, retry_count=total_retries))
-        summary = aggregate_medqa(sample_results)
+            completed_count = len(sample_results_by_index)
+            on_progress(
+                TaskProgress(
+                    completed_count=completed_count,
+                    total_count=len(samples),
+                    progress_percent=completed_count / len(samples) * 100 if samples else 0,
+                    success_count=success,
+                    failed_count=failed,
+                    retry_count=total_retries,
+                )
+            )
+        ordered_indexes = sorted(sample_results_by_index)
+        summary = aggregate_medqa(
+            [sample_results_by_index[index] for index in ordered_indexes]
+        )
         return EvaluationRunResult(
             success_count=summary.success_count,
             failed_count=summary.failed_count,
@@ -375,7 +398,7 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
             parse_success_rate=summary.parse_success_rate,
             request_success_count=summary.request_success_count,
             parse_failed_count=summary.parse_failed_count,
-            samples=records,
+            samples=[records_by_index[index] for index in ordered_indexes],
         )
 
     def _run_healthbench(self, task, on_progress, is_cancelled):

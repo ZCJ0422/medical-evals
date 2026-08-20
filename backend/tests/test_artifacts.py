@@ -1,6 +1,8 @@
 import json
 import re
 
+import pytest
+
 from medical_evals_api.artifacts import ArtifactWriter
 
 
@@ -56,3 +58,94 @@ def test_medqa_checkpoint_records_use_shared_aggregation():
 
     assert metrics.parse_success_rate == 2 / 3
     assert metrics.total_score == 1 / 3
+
+
+def test_artifact_writer_appends_strictly_increasing_indices_without_atomic_rewrite(
+    tmp_path, monkeypatch
+):
+    writer = ArtifactWriter(tmp_path, "task-1")
+
+    def fail_atomic_rewrite(*_args, **_kwargs):
+        raise AssertionError("strictly increasing samples must use append persistence")
+
+    monkeypatch.setattr(writer, "_write_samples_atomically", fail_atomic_rewrite)
+    writer.upsert_sample({"index": 0, "sample_id": "sample-0"})
+    writer.upsert_sample({"index": 1, "sample_id": "sample-1"})
+
+    records = [
+        json.loads(line)
+        for line in writer.samples_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["index"] for record in records] == [0, 1]
+
+
+def test_artifact_writer_rewrites_a_nonempty_malformed_artifact_before_upsert(
+    tmp_path, monkeypatch
+):
+    directory = tmp_path / "task-1"
+    directory.mkdir()
+    (directory / "samples.jsonl").write_text("not-json\n", encoding="utf-8")
+    writer = ArtifactWriter(tmp_path, "task-1")
+    atomic_writes = []
+    write_atomically = writer._write_samples_atomically
+
+    def record_atomic_write(records):
+        atomic_writes.append(records)
+        write_atomically(records)
+
+    monkeypatch.setattr(writer, "_write_samples_atomically", record_atomic_write)
+    writer.upsert_sample({"index": 0, "sample_id": "sample-0"})
+
+    assert len(atomic_writes) == 1
+    assert writer.samples_path.read_text(encoding="utf-8") == (
+        '{"index": 0, "sample_id": "sample-0"}\n'
+    )
+
+
+@pytest.mark.parametrize(
+    ("existing_records", "new_record", "expected_indices", "expected_sample_ids"),
+    [
+        (
+            [{"index": 0, "sample_id": "old-0"}],
+            {"index": 0, "sample_id": "new-0"},
+            [0],
+            ["new-0"],
+        ),
+        (
+            [{"index": 1, "sample_id": "sample-1"}],
+            {"index": 0, "sample_id": "sample-0"},
+            [0, 1],
+            ["sample-0", "sample-1"],
+        ),
+    ],
+    ids=("duplicate-index", "earlier-sparse-index"),
+)
+def test_artifact_writer_atomically_rewrites_duplicate_or_earlier_indices(
+    tmp_path,
+    monkeypatch,
+    existing_records,
+    new_record,
+    expected_indices,
+    expected_sample_ids,
+):
+    writer = ArtifactWriter(tmp_path, "task-1")
+    for record in existing_records:
+        writer.append_sample(record)
+
+    atomic_writes = []
+    write_atomically = writer._write_samples_atomically
+
+    def record_atomic_write(records):
+        atomic_writes.append(records)
+        write_atomically(records)
+
+    monkeypatch.setattr(writer, "_write_samples_atomically", record_atomic_write)
+    writer.upsert_sample(new_record)
+
+    records = [
+        json.loads(line)
+        for line in writer.samples_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(atomic_writes) == 1
+    assert [record["index"] for record in records] == expected_indices
+    assert [record["sample_id"] for record in records] == expected_sample_ids

@@ -1,3 +1,5 @@
+import json
+
 from medical_evals_api.evaluator_adapter import OpenAICompatibleEvaluationAdapter
 from medical_evals_api.artifacts import ArtifactWriter
 from medical_evals_api.repositories.tasks import TaskRepository
@@ -72,6 +74,41 @@ def test_worker_runs_healthbench_with_target_and_judge_clients(tmp_path, monkeyp
         "tag:communication": 1.0,
         "tag:safety": 0.5,
     }
+
+
+def test_healthbench_worker_appends_increasing_indices_without_atomic_rewrite(
+    tmp_path, monkeypatch
+):
+    def fail_atomic_rewrite(*_args, **_kwargs):
+        raise AssertionError("strictly increasing samples must use append persistence")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ArtifactWriter, "_write_samples_atomically", fail_atomic_rewrite)
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(
+        name="ordered HealthBench persistence",
+        target_model_id="target",
+        judge_model_id="judge",
+        dataset_version_id="medical-healthbench.smoke.v1",
+        rubric_id="healthbench-default",
+    )
+
+    result = Worker(
+        repo,
+        adapter=OpenAICompatibleEvaluationAdapter(
+            target_client=FakeClient(), judge_client=FakeClient()
+        ),
+    ).run_task(task.task_id)
+
+    assert result.status == TaskStatus.COMPLETED
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "artifacts" / task.task_id / "samples.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [record["index"] for record in records] == [0, 1]
+    assert repo.get_result(task.task_id)["total_score"] == 0.5
 
 
 def test_healthbench_persists_per_sample_errors(tmp_path, monkeypatch):

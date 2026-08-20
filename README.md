@@ -166,9 +166,11 @@ uv run oaieval medical-openai-compatible medical-medqa.dev.v1 \
   --record_path ./experiments/runs/medical-medqa-smoke.jsonl
 ```
 
-The MedQA Registry defaults are `temperature=0.1` and `max_tokens=2048`.
-Override them per run with `--extra_eval_params`, for example
-`temperature=0.2,max_tokens=512` for a reasoning model.
+The smoke command above explicitly overrides `max_tokens` to `2048`; that is
+an example override, not the default. The MedQA Registry defaults are
+`temperature=0.1` and `max_tokens=5120`. Override them per run with
+`--extra_eval_params`, for example `temperature=0.2,max_tokens=512` for a
+reasoning model.
 
 When `--record_path` is omitted, the external Evals CLI automatically writes
 the result JSONL under `/tmp/evallogs/` using the pattern

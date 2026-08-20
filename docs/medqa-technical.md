@@ -15,9 +15,10 @@ medical-medqa.dev.v1
 核心实现文件：
 
 - `medical_evals/datasets/medqa.py`：读取和校验样本；
-- `medical_evals/evals/medqa.py`：构造 prompt、调用模型和记录 match；
+- `medical_evals/core/medqa.py`：共享的 canonical prompt、单样本请求/解析/评分和聚合指标；
+- `medical_evals/evals/medqa.py`：CLI 边界，使用共享 core 并记录 OpenAI Evals match；
+- `backend/medical_evals_api/evaluator_adapter.py`：Workbench 编排，使用同一 MedQA core；
 - `medical_evals/graders/choice_parser.py`：从模型输出解析选项；
-- `medical_evals/metrics/medical_qa.py`：计算指标；
 - `registry/evals/medical_medqa.yaml`：注册 Eval 和默认参数；
 - `registry/data/medical_medqa/dev.jsonl`：开发集数据。
 
@@ -53,8 +54,8 @@ medical-medqa.dev.v1
 
 ## 3. Prompt 和模型输出
 
-`build_prompt` 将每条样本构造成中文单项选择题提示。标准答案不会放入 prompt，
-并要求模型只输出一个字母：
+共享 core 中的 `build_medqa_prompt` 将每条样本构造成中文单项选择题提示；CLI 的
+`build_prompt` 是其兼容别名。标准答案不会放入 prompt，并要求模型只输出一个字母：
 
 ```text
 请回答下面的医学单项选择题。
@@ -69,12 +70,13 @@ D. ...
 请只输出一个选项字母（A、B、C 或 D）。
 ```
 
-实际请求通过 `CompletionFn` 发送，Eval 不直接调用 OpenAI SDK。Registry 默认
-生成参数为：
+共享 core 通过 `ModelClient` 发起实际请求；CLI 边界把既有 `CompletionFn` 适配为
+该协议，因此 Eval 不直接调用 OpenAI SDK。共享 core、`MedQAEval` 和 Registry 的
+默认生成参数一致：
 
 ```yaml
 temperature: 0.1
-max_tokens: 2048
+max_tokens: 5120
 ```
 
 可以在 CLI 中覆盖：
@@ -104,6 +106,9 @@ max_tokens: 2048
 accuracy = 正确题数 / match 事件数
 parse_success_rate = 成功解析出选项的题数 / 请求成功的题数
 ```
+
+上述指标由共享 core 的 `aggregate_medqa` 统一计算，CLI 和 Workbench 只负责各自的
+记录、持久化和编排。
 
 没有样本时 `accuracy` 返回 `0.0`。当没有任何请求成功（包括空数据集或所有
 请求都失败）时，`parse_success_rate` 没有可用分母，返回 `None`（JSON API 中为
@@ -138,6 +143,10 @@ uv run oaieval medical-openai-compatible medical-medqa.dev.v1 \
   --record_path ./experiments/runs/medical-medqa-smoke.jsonl \
   --log_to_file ./experiments/runs/medical-medqa-smoke.log
 ```
+
+此 smoke 示例显式以 `max_tokens=2048` 覆盖默认值，便于快速连通性检查；它不是
+Registry 默认值。去掉 `--extra_eval_params` 时会使用 `temperature=0.1` 和
+`max_tokens=5120`。
 
 运行完整开发集时去掉 `--max_samples 1`：
 
