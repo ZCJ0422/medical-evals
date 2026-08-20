@@ -11,6 +11,7 @@ from evals.base import RunSpec
 from evals.cli.oaieval import add_token_usage_to_result
 from evals.record import DummyRecorder
 from medical_evals.adapters.openai_compatible import OpenAICompatibleCompletionFn
+from medical_evals.core.models import CompletionRequest
 
 
 class FakeChatCompletions:
@@ -76,7 +77,7 @@ def test_returns_completion_result_and_sends_chat_request():
 
 
 def test_passes_api_key_base_url_and_timeout_to_openai_client():
-    with patch("medical_evals.adapters.openai_compatible.OpenAI") as openai_client:
+    with patch("medical_evals.core.openai_compatible.OpenAI") as openai_client:
         OpenAICompatibleCompletionFn(
             api_key="test-key",
             base_url="https://example.test/v1",
@@ -160,9 +161,42 @@ def test_empty_choices_return_empty_completion_and_record_error():
         result = adapter("题目")
 
     assert result.get_completions() == []
+    assert result.error is not None
+    assert result.retry_count == 0
     error_events = test_recorder.get_events("error")
     assert len(error_events) == 1
     assert error_events[0].data["type"] == "EmptyCompletionError"
+
+
+def test_complete_core_forwards_events_and_records_the_shared_response():
+    client = FakeClient([
+        APITimeoutError(httpx.Request("POST", "https://example.test/v1/chat/completions")),
+        response("C"),
+    ])
+    adapter = OpenAICompatibleCompletionFn(
+        model="medical-model",
+        client=client,
+        retry_base_seconds=0,
+        sleep_fn=lambda _: None,
+    )
+    events = []
+    test_recorder = recorder()
+
+    with test_recorder.as_default_recorder("sample-0"):
+        result = adapter.complete_core(
+            CompletionRequest("题目", "medical-model", 0.0, 1),
+            on_event=events.append,
+        )
+
+    assert result.text == "C"
+    assert result.retry_count == 1
+    assert [event.kind for event in events] == [
+        "request_started",
+        "retry",
+        "request_started",
+        "request_completed",
+    ]
+    assert len(test_recorder.get_events("sampling")) == 1
 
 
 def test_empty_content_is_retried_then_returned():

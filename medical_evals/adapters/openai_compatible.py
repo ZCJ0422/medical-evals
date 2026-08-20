@@ -5,21 +5,15 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Optional
-
-from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
 
 from evals.api import CompletionFn, CompletionResult
 from evals.prompt.base import OpenAICreateChatPrompt, Prompt
 from evals.record import default_recorder
-
-
-RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
-
-
-class EmptyCompletionError(ValueError):
-    """Raised internally when an API response has no usable message content."""
+from medical_evals.core.models import CompletionRequest, EvaluationEvent, ModelResponse
+from medical_evals.core.openai_compatible import EmptyCompletionError, OpenAICompatibleClient
 
 
 def _prompt_to_messages(prompt: Any) -> OpenAICreateChatPrompt:
@@ -39,11 +33,15 @@ def _prompt_to_messages(prompt: Any) -> OpenAICreateChatPrompt:
 
 def _extract_completions(response: Any) -> list[str]:
     """Extract non-empty message contents from an OpenAI chat response."""
-    choices = getattr(response, "choices", None) or []
+    choices = (
+        response.get("choices", [])
+        if isinstance(response, Mapping)
+        else getattr(response, "choices", None) or []
+    )
     completions: list[str] = []
     for choice in choices:
-        message = getattr(choice, "message", None)
-        content = getattr(message, "content", None)
+        message = choice.get("message") if isinstance(choice, Mapping) else getattr(choice, "message", None)
+        content = message.get("content") if isinstance(message, Mapping) else getattr(message, "content", None)
         if content is not None and str(content).strip():
             completions.append(str(content))
     return completions
@@ -88,21 +86,22 @@ def _serialize_usage_details(usage: Any) -> dict[str, Any] | None:
     return details or None
 
 
-def _is_retryable_error(error: Exception) -> bool:
-    if isinstance(error, (APIConnectionError, APITimeoutError, RateLimitError)):
-        return True
-    if isinstance(error, APIStatusError):
-        status_code = getattr(getattr(error, "response", None), "status_code", None)
-        return status_code in RETRYABLE_STATUS_CODES
-    return False
-
-
 class OpenAICompatibleCompletionResult(CompletionResult):
     """CompletionResult wrapper around an OpenAI chat response."""
 
-    def __init__(self, raw_data: Any, prompt: OpenAICreateChatPrompt, completions: list[str]):
+    def __init__(
+        self,
+        raw_data: Any,
+        prompt: OpenAICreateChatPrompt,
+        completions: list[str],
+        *,
+        error: Exception | None = None,
+        retry_count: int = 0,
+    ):
         self.raw_data = raw_data
         self.prompt = prompt
+        self.error = error
+        self.retry_count = retry_count
         self._completions = list(completions)
 
     def get_completions(self) -> list[str]:
@@ -140,19 +139,21 @@ class OpenAICompatibleCompletionFn(CompletionFn):
         self.max_retries = max_retries
         self.retry_base_seconds = retry_base_seconds
         self.sleep_fn = sleep_fn
-
-        if client is None:
-            client_kwargs: dict[str, Any] = {
-                "api_key": self.api_key,
-                "timeout": timeout,
-                # Retries are controlled here so Recorder sees one final failure,
-                # rather than an SDK retry being hidden inside the request.
-                "max_retries": 0,
-            }
-            if self.base_url is not None:
-                client_kwargs["base_url"] = self.base_url
-            client = OpenAI(**client_kwargs)
-        self.client = client
+        self.core_client = OpenAICompatibleClient(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            model=self.model,
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_base_seconds=retry_base_seconds,
+            sleep_fn=sleep_fn,
+            client=client,
+        )
+        self.client = self.core_client.client
+        self._request_metadata: ContextVar[dict[str, Any] | None] = ContextVar(
+            "openai_compatible_request_metadata",
+            default=None,
+        )
 
     def _record_error(self, error: Exception, attempts: int) -> None:
         recorder = default_recorder()
@@ -197,43 +198,69 @@ class OpenAICompatibleCompletionFn(CompletionFn):
 
     def __call__(self, prompt: Any, **kwargs: Any) -> OpenAICompatibleCompletionResult:
         messages = _prompt_to_messages(prompt)
-        request_kwargs = dict(kwargs)
-        request_kwargs["model"] = self.model
-        request_kwargs["messages"] = messages
         request_metadata = {
-            key: value for key, value in request_kwargs.items() if key not in {"model", "messages"}
+            key: value for key, value in kwargs.items() if key not in {"model", "messages"}
         }
-
-        response = None
-        started_at = time.perf_counter()
-        for attempt in range(self.max_retries + 1):
+        request = CompletionRequest(
+            prompt=messages,
+            model=self.model,
+            temperature=kwargs.get("temperature", 0.0),
+            max_tokens=kwargs.get("max_tokens", 5120),
+        )
+        token = self._request_metadata.set(request_metadata)
+        try:
             try:
-                response = self.client.chat.completions.create(**request_kwargs)
-                completions = _extract_completions(response)
-                if not completions:
-                    raise EmptyCompletionError(
-                        "OpenAI-compatible response has no choices or message content"
-                    )
-
-                self._record_sampling(
-                    messages,
-                    response,
-                    completions,
-                    latency=time.perf_counter() - started_at,
-                    request_metadata=request_metadata,
-                )
-                return OpenAICompatibleCompletionResult(response, messages, completions)
+                response = self.complete_core(request)
             except EmptyCompletionError as error:
-                if attempt < self.max_retries:
-                    self.sleep_fn(self.retry_base_seconds * (2**attempt))
-                    continue
-                self._record_error(error, attempt + 1)
-                return OpenAICompatibleCompletionResult(response, messages, [])
-            except Exception as error:
-                if _is_retryable_error(error) and attempt < self.max_retries:
-                    self.sleep_fn(self.retry_base_seconds * (2**attempt))
-                    continue
-                self._record_error(error, attempt + 1)
-                raise
+                return OpenAICompatibleCompletionResult(
+                    error.raw_response,
+                    messages,
+                    [],
+                    error=error,
+                    retry_count=error.retry_count,
+                )
+        finally:
+            self._request_metadata.reset(token)
 
-        raise RuntimeError("OpenAI-compatible completion failed after retries")
+        completions = _extract_completions(response.raw_response) or [response.text]
+        return OpenAICompatibleCompletionResult(
+            response.raw_response,
+            messages,
+            completions,
+            retry_count=response.retry_count,
+        )
+
+    def complete_core(
+        self,
+        request: CompletionRequest,
+        on_event: Callable[[EvaluationEvent], None] | None = None,
+    ) -> ModelResponse:
+        """Delegate one core request while preserving Recorder side effects."""
+        retry_count = 0
+
+        def forward_event(event: EvaluationEvent) -> None:
+            nonlocal retry_count
+            if event.kind == "retry":
+                retry_count = event.attempt
+            if on_event is not None:
+                on_event(event)
+
+        try:
+            response = self.core_client.complete(request, on_event=forward_event)
+        except EmptyCompletionError as error:
+            self._record_error(error, error.retry_count + 1)
+            raise
+        except Exception as error:
+            self._record_error(error, retry_count + 1)
+            raise
+
+        messages = _prompt_to_messages(request.prompt)
+        completions = _extract_completions(response.raw_response) or [response.text]
+        self._record_sampling(
+            messages,
+            response.raw_response,
+            completions,
+            latency=response.latency,
+            request_metadata=self._request_metadata.get() or {},
+        )
+        return response
