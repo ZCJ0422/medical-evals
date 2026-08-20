@@ -3,77 +3,61 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Optional
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from evals.api import CompletionFn, CompletionResult
 from evals.prompt.base import OpenAICreateChatPrompt, Prompt
 from evals.record import default_recorder
 from medical_evals.core.models import CompletionRequest, EvaluationEvent, ModelResponse
 from medical_evals.core.openai_compatible import EmptyCompletionError, OpenAICompatibleClient
+from medical_evals.core.retry import classify_error
 
 
-REDACTED = "[REDACTED]"
-_SENSITIVE_VALUE_PATTERN = re.compile(
-    r"(?i)\b(authorization|api[-_ ]?key|access[-_ ]?token|token|secret|password|signature|sig|cookie)\b\s*[:=]\s*(?:bearer\s+)?[^\s,;]+"
+SAFE_ERROR_CATEGORIES = frozenset(
+    {
+        "timeout_error",
+        "network_error",
+        "rate_limit_error",
+        "authentication_error",
+        "model_or_endpoint_error",
+        "request_error",
+        "empty_completion",
+    }
 )
+SAFE_REQUEST_METADATA = frozenset({"temperature", "max_tokens"})
 
 
-def _is_sensitive_key(key: object) -> bool:
-    normalized = str(key).lower().replace("-", "_").replace(" ", "_")
-    if normalized in {"authorization", "api_key", "apikey", "token", "secret", "password", "signature", "sig", "cookie", "key"}:
-        return True
-    return normalized.endswith(("_api_key", "_token", "_secret", "_password", "_signature", "_credential"))
+class RecorderCompletionError(Exception):
+    """Generic Recorder error that never exposes provider text."""
 
 
-def _sanitize_url(value: str) -> str:
-    parsed = urlsplit(value)
-    if not parsed.scheme or not parsed.netloc or not parsed.query:
-        return value
-    query = [
-        (key, REDACTED if _is_sensitive_key(key) else item)
-        for key, item in parse_qsl(parsed.query, keep_blank_values=True)
-    ]
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+def _safe_error_category(error: Exception) -> str:
+    category = getattr(error, "category", None)
+    if category in SAFE_ERROR_CATEGORIES:
+        return category
+    category, _ = classify_error(error)
+    return category if category in SAFE_ERROR_CATEGORIES else "request_error"
 
 
-def _sanitize_text(value: str, secrets: tuple[str, ...]) -> str:
-    sanitized = value
-    for secret in secrets:
-        if secret:
-            sanitized = sanitized.replace(secret, REDACTED)
-    sanitized = re.sub(
-        r"https?://[^\s'\"<>]+",
-        lambda match: _sanitize_url(match.group(0)),
-        sanitized,
-    )
-    return _SENSITIVE_VALUE_PATTERN.sub(lambda match: f"{match.group(1)}: {REDACTED}", sanitized)
+def _safe_status_code(error: Exception) -> int | None:
+    status_code = getattr(getattr(error, "response", None), "status_code", None)
+    try:
+        return int(status_code)
+    except (TypeError, ValueError):
+        return None
 
 
-def _sanitize_value(value: Any, secrets: tuple[str, ...]) -> Any:
-    if isinstance(value, Mapping):
-        return {
-            str(key): REDACTED if _is_sensitive_key(key) else _sanitize_value(item, secrets)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_sanitize_value(item, secrets) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_sanitize_value(item, secrets) for item in value)
-    if isinstance(value, str):
-        return _sanitize_text(value, secrets)
-    return value
-
-
-def _sanitized_error(error: Exception, secrets: tuple[str, ...]) -> Exception:
-    error_type = type(error).__name__
-    sanitized_type = type(error_type, (Exception,), {})
-    return sanitized_type(_sanitize_text(str(error), secrets))
+def _safe_request_metadata(request_metadata: Mapping[str, Any]) -> dict[str, int | float]:
+    safe_metadata: dict[str, int | float] = {}
+    for key in SAFE_REQUEST_METADATA:
+        value = request_metadata.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            safe_metadata[key] = value
+    return safe_metadata
 
 
 def _prompt_to_messages(prompt: Any) -> OpenAICreateChatPrompt:
@@ -221,10 +205,10 @@ class OpenAICompatibleCompletionFn(CompletionFn):
             return
         recorder.record_error(
             "OpenAI-compatible completion failed",
-            _sanitized_error(error, (self.api_key or "",)),
-            model=self.model,
+            RecorderCompletionError("OpenAI-compatible completion failed"),
+            category=_safe_error_category(error),
             attempts=attempts,
-            status_code=getattr(getattr(error, "response", None), "status_code", None),
+            status_code=_safe_status_code(error),
         )
 
     def _record_sampling(
@@ -250,10 +234,7 @@ class OpenAICompatibleCompletionFn(CompletionFn):
             "model": model,
             "usage": serialized_usage,
             "latency": latency,
-            "request_metadata": _sanitize_value(
-                request_metadata,
-                (self.api_key or "",),
-            ),
+            "request_metadata": _safe_request_metadata(request_metadata),
         }
         if usage_details is not None:
             sampling_data["usage_details"] = usage_details

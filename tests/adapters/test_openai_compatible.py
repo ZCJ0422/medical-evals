@@ -188,45 +188,67 @@ def test_normalizes_nested_usage_for_evals_token_aggregation():
 @pytest.mark.filterwarnings(
     r"ignore:datetime.datetime.utcnow\(\) is deprecated:DeprecationWarning"
 )
-def test_recorder_redacts_provider_errors_and_nested_request_metadata():
-    secret = "sk-secret-value"
+def test_recorder_uses_generic_errors_and_default_deny_metadata():
+    proxy_secret = "proxy-secret"
+    userinfo_secret = "userinfo-password"
+    signed_secret = "signed-query-secret"
+    cookie_secret = "cookie-secret"
+    token_secret = "token-secret"
+    secrets = (proxy_secret, userinfo_secret, signed_secret, cookie_secret, token_secret)
     provider_error = APIStatusError(
-        f"Authorization: Bearer {secret}",
+        "Proxy-Authorization: Bearer proxy-secret; "
+        "request=https://alice:userinfo-password@example.test/callback?"
+        "X-Amz-Credential=signed-query-secret&X-Amz-Signature=signed-query-secret; "
+        "Cookie: session=cookie-secret; token=token-secret",
         response=httpx.Response(
             401,
             request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
-            headers={"x-api-key": secret},
+            headers={"Proxy-Authorization": f"Bearer {proxy_secret}"},
         ),
         body=None,
     )
     client = FakeClient([provider_error, response("C")])
     adapter = OpenAICompatibleCompletionFn(model="medical-model", client=client, max_retries=0)
     test_recorder = recorder()
+    provider_options = {
+        "temperature": 0.2,
+        "max_tokens": 7,
+        "extra_headers": {
+            "Proxy-Authorization": f"Bearer {proxy_secret}",
+            "Cookie": f"session={cookie_secret}",
+        },
+        "callback_url": (
+            "https://alice:"
+            f"{userinfo_secret}@example.test/callback?X-Amz-Credential={signed_secret}"
+        ),
+        "unknown_provider_option": {
+            "token": token_secret,
+            "nested": {"signed_credential": signed_secret},
+        },
+    }
 
     with test_recorder.as_default_recorder("error-sample"):
         with pytest.raises(APIStatusError):
             adapter("题目")
     with test_recorder.as_default_recorder("sampling-sample"):
-        adapter(
-            "题目",
-            extra_headers={
-                "Authorization": f"Bearer {secret}",
-                "X-Trace": "safe-trace",
-            },
-            metadata={"api_key": secret, "label": "safe-label"},
-        )
+        adapter("题目", **provider_options)
 
     error_event = test_recorder.get_events("error")[0].data
     sampling_event = test_recorder.get_events("sampling")[0].data
-    assert secret not in str(error_event)
-    assert secret not in str(sampling_event)
-    assert error_event["type"] == "APIStatusError"
-    assert sampling_event["request_metadata"] == {
-        "extra_headers": {
-            "Authorization": "[REDACTED]",
-            "X-Trace": "safe-trace",
-        },
-        "metadata": {"api_key": "[REDACTED]", "label": "safe-label"},
+    assert all(secret not in str(error_event) for secret in secrets)
+    assert all(secret not in str(sampling_event) for secret in secrets)
+    assert error_event == {
+        "type": "RecorderCompletionError",
+        "message": "OpenAI-compatible completion failed",
+        "category": "authentication_error",
+        "attempts": 1,
+        "status_code": 401,
+    }
+    assert sampling_event["request_metadata"] == {"temperature": 0.2, "max_tokens": 7}
+    assert client.chat.completions.calls[1] == {
+        "model": "medical-model",
+        "messages": [{"role": "user", "content": "题目"}],
+        **provider_options,
     }
 
 
@@ -243,7 +265,8 @@ def test_empty_choices_return_empty_completion_and_record_error():
     assert result.retry_count == 0
     error_events = test_recorder.get_events("error")
     assert len(error_events) == 1
-    assert error_events[0].data["type"] == "EmptyCompletionError"
+    assert error_events[0].data["type"] == "RecorderCompletionError"
+    assert error_events[0].data["category"] == "empty_completion"
 
 
 def test_complete_core_forwards_events_and_records_the_shared_response():
@@ -335,4 +358,5 @@ def test_api_errors_are_retried_recorded_and_reraised(error):
     assert len(client.chat.completions.calls) == 2
     error_events = test_recorder.get_events("error")
     assert len(error_events) == 1
-    assert error_events[0].data["type"] == type(error).__name__
+    assert error_events[0].data["type"] == "RecorderCompletionError"
+    assert error_events[0].data["message"] == "OpenAI-compatible completion failed"
