@@ -10,8 +10,9 @@ Prompt = str | list[dict[str, Any]]
 class CompletionRequest:
     prompt: Prompt
     model: str
-    temperature: float
-    max_tokens: int
+    temperature: float | None = None
+    max_tokens: int | None = None
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

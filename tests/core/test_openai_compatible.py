@@ -89,6 +89,39 @@ def test_timeout_retries_are_returned_on_the_response():
     ]
 
 
+def test_request_options_are_forwarded_without_optional_generation_defaults():
+    fake_openai_client = FakeOpenAIClient([response("A")])
+    client = OpenAICompatibleClient(model="model-a", client=fake_openai_client)
+
+    client.complete(
+        CompletionRequest(
+            "question",
+            "model-a",
+            options={
+                "stop": ["END"],
+                "top_p": 0.4,
+                "seed": 7,
+                "n": 2,
+                "response_format": {"type": "json_object"},
+                "tools": [{"type": "function", "function": {"name": "lookup"}}],
+            },
+        )
+    )
+
+    assert fake_openai_client.chat.completions.calls == [
+        {
+            "model": "model-a",
+            "messages": [{"role": "user", "content": "question"}],
+            "stop": ["END"],
+            "top_p": 0.4,
+            "seed": 7,
+            "n": 2,
+            "response_format": {"type": "json_object"},
+            "tools": [{"type": "function", "function": {"name": "lookup"}}],
+        }
+    ]
+
+
 def test_retry_count_is_not_shared_between_calls():
     fake_openai_client = FakeOpenAIClient([response("A"), response("B")])
     client = OpenAICompatibleClient(model="model-a", client=fake_openai_client)

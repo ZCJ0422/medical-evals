@@ -57,7 +57,7 @@ class OpenAICompatibleClient(CoreOpenAICompatibleClient):
         *,
         timeout: float = 60.0,
         transport=None,
-        max_retries: int = 0,
+        max_retries: int = 2,
         retry_base_seconds: float = 1.0,
         sleep_fn: Callable[[float], None] = time.sleep,
         on_retry: Callable[[int, Exception], None] | None = None,

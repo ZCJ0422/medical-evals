@@ -76,6 +76,39 @@ def test_returns_completion_result_and_sends_chat_request():
     ]
 
 
+def test_forwards_supported_completion_options_without_injecting_defaults():
+    client = FakeClient([response("C")])
+    adapter = OpenAICompatibleCompletionFn(
+        model="medical-model",
+        client=client,
+        max_retries=0,
+    )
+
+    result = adapter(
+        "请回答问题",
+        stop=["END"],
+        top_p=0.4,
+        seed=7,
+        n=2,
+        response_format={"type": "json_object"},
+        tools=[{"type": "function", "function": {"name": "lookup"}}],
+    )
+
+    assert result.get_completions() == ["C"]
+    assert client.chat.completions.calls == [
+        {
+            "model": "medical-model",
+            "messages": [{"role": "user", "content": "请回答问题"}],
+            "stop": ["END"],
+            "top_p": 0.4,
+            "seed": 7,
+            "n": 2,
+            "response_format": {"type": "json_object"},
+            "tools": [{"type": "function", "function": {"name": "lookup"}}],
+        }
+    ]
+
+
 def test_passes_api_key_base_url_and_timeout_to_openai_client():
     with patch("medical_evals.core.openai_compatible.OpenAI") as openai_client:
         OpenAICompatibleCompletionFn(
@@ -149,6 +182,51 @@ def test_normalizes_nested_usage_for_evals_token_aggregation():
         "usage_prompt_tokens": 264,
         "usage_completion_tokens": 29,
         "usage_total_tokens": 293,
+    }
+
+
+@pytest.mark.filterwarnings(
+    r"ignore:datetime.datetime.utcnow\(\) is deprecated:DeprecationWarning"
+)
+def test_recorder_redacts_provider_errors_and_nested_request_metadata():
+    secret = "sk-secret-value"
+    provider_error = APIStatusError(
+        f"Authorization: Bearer {secret}",
+        response=httpx.Response(
+            401,
+            request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+            headers={"x-api-key": secret},
+        ),
+        body=None,
+    )
+    client = FakeClient([provider_error, response("C")])
+    adapter = OpenAICompatibleCompletionFn(model="medical-model", client=client, max_retries=0)
+    test_recorder = recorder()
+
+    with test_recorder.as_default_recorder("error-sample"):
+        with pytest.raises(APIStatusError):
+            adapter("题目")
+    with test_recorder.as_default_recorder("sampling-sample"):
+        adapter(
+            "题目",
+            extra_headers={
+                "Authorization": f"Bearer {secret}",
+                "X-Trace": "safe-trace",
+            },
+            metadata={"api_key": secret, "label": "safe-label"},
+        )
+
+    error_event = test_recorder.get_events("error")[0].data
+    sampling_event = test_recorder.get_events("sampling")[0].data
+    assert secret not in str(error_event)
+    assert secret not in str(sampling_event)
+    assert error_event["type"] == "APIStatusError"
+    assert sampling_event["request_metadata"] == {
+        "extra_headers": {
+            "Authorization": "[REDACTED]",
+            "X-Trace": "safe-trace",
+        },
+        "metadata": {"api_key": "[REDACTED]", "label": "safe-label"},
     }
 
 

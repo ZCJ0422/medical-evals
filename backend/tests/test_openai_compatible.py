@@ -74,6 +74,29 @@ def test_openai_compatible_client_retries_timeout_then_returns_response():
     assert client.last_retry_count == 1
 
 
+def test_openai_compatible_client_defaults_to_two_retries():
+    calls = []
+    sleeps = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if len(calls) == 1:
+            raise httpx.ReadTimeout("temporary timeout", request=request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "A"}}]})
+
+    client = OpenAICompatibleClient(
+        "https://example.test/v1",
+        "secret-key",
+        transport=httpx.MockTransport(handler),
+        sleep_fn=sleeps.append,
+    )
+
+    assert client.complete("question", model="model", temperature=0.1, max_tokens=10) == "A"
+    assert len(calls) == 2
+    assert sleeps == [1.0]
+    assert client.last_retry_count == 1
+
+
 def test_openai_compatible_client_does_not_retry_non_retryable_http_error():
     calls = []
 

@@ -154,9 +154,12 @@ class OpenAICompatibleClient:
         request_kwargs = {
             "model": request.model,
             "messages": _messages(request.prompt),
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
         }
+        request_kwargs.update(request.options)
+        if request.temperature is not None:
+            request_kwargs["temperature"] = request.temperature
+        if request.max_tokens is not None:
+            request_kwargs["max_tokens"] = request.max_tokens
         retry_count = 0
         started_at = time.perf_counter()
         last_response: Any = None
