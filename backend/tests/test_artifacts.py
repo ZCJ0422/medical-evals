@@ -42,14 +42,17 @@ def test_artifact_writer_prefixes_logs_with_local_timezone_timestamp(tmp_path):
     assert re.match(r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\] target request completed$", line)
 
 
-def test_medqa_result_distinguishes_parse_success_from_accuracy():
-    from medical_evals_api.evaluator_adapter import medqa_metrics
+def test_medqa_checkpoint_records_use_shared_aggregation():
+    from medical_evals.core.medqa import aggregate_medqa
+    from medical_evals_api.evaluator_adapter import deserialize_medqa_record
 
-    metrics = medqa_metrics([
-        {"predicted": "A", "expected": "A", "parse_failed": False},
-        {"predicted": "B", "expected": "A", "parse_failed": False},
-        {"predicted": None, "expected": "C", "parse_failed": True},
-    ])
+    records = [
+        {"sample_id": "1", "predicted": "A", "expected": "A", "correct": True, "parse_failed": False, "raw_output": "A", "error": None, "retry_count": 0},
+        {"sample_id": "2", "predicted": "B", "expected": "A", "correct": False, "parse_failed": False, "raw_output": "B", "error": None, "retry_count": 0},
+        {"sample_id": "3", "predicted": None, "expected": "C", "correct": False, "parse_failed": True, "raw_output": "?", "error": None, "retry_count": 0},
+    ]
 
-    assert metrics["parse_success_rate"] == 2 / 3
-    assert metrics["accuracy"] == 1 / 3
+    metrics = aggregate_medqa([deserialize_medqa_record(record) for record in records])
+
+    assert metrics.parse_success_rate == 2 / 3
+    assert metrics.total_score == 1 / 3

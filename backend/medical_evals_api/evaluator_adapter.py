@@ -7,8 +7,9 @@ from .schemas.common import TaskProgress
 from .openai_compatible import OpenAICompatibleClient
 from .paths import registry_data_path, workspace_dataset_path
 from .secrets import decrypt_secret
+from medical_evals.core.medqa import aggregate_medqa, evaluate_medqa_sample
+from medical_evals.core.models import EvaluationEvent, MedQASampleResult, SampleError
 from medical_evals.datasets.medqa import load_medqa_samples
-from medical_evals.graders.choice_parser import parse_choice
 from medical_evals.datasets.healthbench import load_healthbench_samples
 from medical_evals.judges.rubric import build_rubric_judge_prompt, parse_rubric_judgment
 
@@ -16,28 +17,54 @@ from medical_evals.judges.rubric import build_rubric_judge_prompt, parse_rubric_
 SAMPLE_MAX_RETRIES = 2
 
 
-def medqa_metrics(records: list[dict]) -> dict[str, float | int | None]:
-    total = len(records)
-    request_success = sum(1 for record in records if not record.get("error"))
-    parsed = sum(1 for record in records if not record.get("parse_failed"))
-    correct = sum(1 for record in records if record.get("correct", record.get("predicted") == record.get("expected")))
-    return {
-        "accuracy": correct / total if total else 0.0,
-        "parse_success_rate": parsed / request_success if request_success else None,
-        "request_success_count": request_success,
-        "parse_failed_count": sum(1 for record in records if record.get("parse_failed")),
-    }
-
-
 def _healthbench_prompt(sample: dict) -> list[dict]:
     return [dict(message) for message in sample["prompt"]]
 
 
-def _medqa_prompt(sample: dict) -> str:
-    lines = ["请回答下面的医学单项选择题。", f"题目：{sample['question']}", "选项："]
-    lines.extend(f"{key}. {sample['options'][key]}" for key in ("A", "B", "C", "D"))
-    lines.extend(["要求：", "不要输出解释、推理过程、答案文字、标点符号、Markdown 或其他内容。", "请只输出一个选项字母（A、B、C 或 D）。"])
-    return "\n".join(lines)
+def serialize_medqa_result(
+    index: int, sample: dict, result: MedQASampleResult
+) -> dict:
+    """Convert a shared MedQA result to the stable Workbench artifact schema."""
+    error = result.error
+    return {
+        "index": index,
+        "sample_id": result.sample_id or str(sample.get("id", index)),
+        "question": sample["question"],
+        "expected": result.expected,
+        "predicted": result.predicted,
+        "correct": result.correct,
+        "parse_failed": result.parse_failed,
+        "raw_output": result.raw_output,
+        "error": error.message if error else None,
+        "error_category": error.category if error else None,
+        "retry_count": result.retry_count,
+    }
+
+
+def deserialize_medqa_record(record: dict) -> MedQASampleResult:
+    """Restore a Workbench checkpoint record for shared MedQA aggregation."""
+    retry_count = int(record.get("retry_count", 0))
+    error_message = record.get("error")
+    error = None
+    if error_message:
+        error = SampleError(
+            category=str(record.get("error_category") or "request_error"),
+            message=str(error_message),
+            stage="request",
+            retry_count=retry_count,
+        )
+    predicted = record.get("predicted")
+    expected = str(record.get("expected", ""))
+    return MedQASampleResult(
+        sample_id=str(record.get("sample_id", "")),
+        expected=expected,
+        predicted=str(predicted) if predicted is not None else None,
+        raw_output=str(record.get("raw_output", "")),
+        correct=bool(record.get("correct", predicted == expected)),
+        parse_failed=bool(record.get("parse_failed", False)),
+        retry_count=retry_count,
+        error=error,
+    )
 
 
 def _judge_healthbench_rubric(judge, sample: dict, answer: str, rubric: dict, model: str, on_event=None) -> dict:
@@ -222,57 +249,101 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
         if self.on_stage:
             self.on_stage(name)
 
+    def _core_event(
+        self,
+        event: EvaluationEvent,
+        *,
+        sample_number: int,
+        total_samples: int,
+    ) -> None:
+        if event.kind == "request_started":
+            self._log("[target] request started")
+        elif event.kind == "request_completed":
+            self._log("[target] request completed")
+        elif event.kind == "request_failed":
+            self._log(f"[target] request failed: {event.category or 'request_error'}")
+        elif event.kind == "retry":
+            self._log(
+                f"[retry] sample {sample_number}/{total_samples} "
+                f"attempt={event.attempt + 1} reason={event.category or 'request_error'}"
+            )
+
     def run(self, task: EvaluationTask, on_progress: Callable[[TaskProgress], None], is_cancelled: Callable[[], bool]) -> EvaluationRunResult:
         if task.dataset_version_id.startswith("medical-healthbench"):
             return self._run_healthbench(task, on_progress, is_cancelled)
         if not task.dataset_version_id.startswith("medical-medqa"):
             raise NotImplementedError("Unsupported dataset version")
+        return self._run_medqa(task, on_progress, is_cancelled)
+
+    def _run_medqa(self, task, on_progress, is_cancelled):
         samples = load_medqa_samples(registry_data_path("medical_medqa", "dev.jsonl"))
         if task.max_samples:
             samples = samples[:task.max_samples]
-        target = self.target_client or OpenAICompatibleClient(task.target_base_url, decrypt_secret(task.target_api_key_enc))
-        success = failed = correct = 0
+        target = self.target_client or OpenAICompatibleClient(
+            task.target_base_url,
+            decrypt_secret(task.target_api_key_enc),
+            max_retries=2,
+            retry_base_seconds=1.0,
+        )
+        success = failed = total_retries = 0
         records = []
+        sample_results = []
         checkpoint = getattr(self, "checkpoint", {})
         for index, sample in enumerate(samples, start=1):
-            if is_cancelled(): break
+            if is_cancelled():
+                break
             if index - 1 in checkpoint:
                 record = checkpoint[index - 1]
                 records.append(record)
-                success += 1
-                correct += int(bool(record.get("correct")))
-                on_progress(TaskProgress(completed_count=index, total_count=len(samples), progress_percent=index / len(samples) * 100, success_count=success, failed_count=failed, retry_count=sum(int(item.get("retry_count", 0)) for item in records)))
+                result = deserialize_medqa_record(record)
+                sample_results.append(result)
+                success += int(result.error is None)
+                failed += int(result.error is not None)
+                total_retries += result.retry_count
+                on_progress(TaskProgress(completed_count=index, total_count=len(samples), progress_percent=index / len(samples) * 100, success_count=success, failed_count=failed, retry_count=total_retries))
                 continue
-            prompt = _medqa_prompt(sample)
-            try:
-                self._log(f"[sample {index}/{len(samples)}] started")
-                self._stage("target_model")
-                self._log("[target] request started")
-                # Reasoning models may spend most of their completion budget on
-                # hidden/visible thinking before emitting the choice letter.
-                # Keep the evaluator's original MedQA budget instead of
-                # truncating the answer during reasoning.
-                answer = target.complete(prompt, model=task.target_model_id, temperature=0.1, max_tokens=5120)
-                self._log("[target] request completed")
+            self._log(f"[sample {index}/{len(samples)}] started")
+            result = evaluate_medqa_sample(
+                target,
+                sample,
+                model=task.target_model_id,
+                temperature=0.1,
+                max_tokens=5120,
+                on_event=lambda event, sample_number=index: self._core_event(
+                    event,
+                    sample_number=sample_number,
+                    total_samples=len(samples),
+                ),
+            )
+            if result.error is None:
                 self._stage("parsing")
-                picked = parse_choice(answer)
                 success += 1
-                if picked == sample["answer"]:
-                    correct += 1
-                record = {"index": index - 1, "sample_id": sample.get("id", str(index - 1)), "question": sample["question"], "expected": sample["answer"], "predicted": picked, "correct": picked == sample["answer"], "parse_failed": picked is None, "raw_output": answer, "error": None, "retry_count": 0}
-            except Exception as error:
-                self._log(f"[target] request failed: {_error_category(error)}")
+            else:
                 failed += 1
-                record = {"index": index - 1, "sample_id": sample.get("id", str(index - 1)), "question": sample["question"], "expected": sample["answer"], "predicted": None, "correct": False, "parse_failed": True, "raw_output": "", "error": str(error), "retry_count": 0}
+            total_retries += result.retry_count
+            sample_results.append(result)
+            record = serialize_medqa_result(index - 1, sample, result)
             records.append(record)
             if self.on_sample:
                 self._stage("saving")
                 self.on_sample(record)
             self._log(f"[sample {index}/{len(samples)}] {'completed' if not record.get('error') else 'failed'}")
-            on_progress(TaskProgress(completed_count=index, total_count=len(samples), progress_percent=index / len(samples) * 100, success_count=success, failed_count=failed))
-        metrics = medqa_metrics(records)
-        score = metrics["accuracy"]
-        return EvaluationRunResult(success_count=success, failed_count=failed, retry_count=0, total_count=len(samples), total_score=score, dimension_scores={"accuracy": score}, error_categories={"request_error": failed} if failed else {}, accuracy=score, parse_success_rate=metrics["parse_success_rate"], request_success_count=success, parse_failed_count=metrics["parse_failed_count"], samples=records)
+            on_progress(TaskProgress(completed_count=index, total_count=len(samples), progress_percent=index / len(samples) * 100, success_count=success, failed_count=failed, retry_count=total_retries))
+        summary = aggregate_medqa(sample_results)
+        return EvaluationRunResult(
+            success_count=summary.success_count,
+            failed_count=summary.failed_count,
+            retry_count=summary.retry_count,
+            total_count=summary.total_count,
+            total_score=summary.total_score,
+            dimension_scores=summary.dimensions,
+            error_categories=summary.error_categories,
+            accuracy=summary.total_score,
+            parse_success_rate=summary.parse_success_rate,
+            request_success_count=summary.request_success_count,
+            parse_failed_count=summary.parse_failed_count,
+            samples=records,
+        )
 
     def _run_healthbench(self, task, on_progress, is_cancelled):
         path = healthbench_samples_path(task.dataset_version_id)
