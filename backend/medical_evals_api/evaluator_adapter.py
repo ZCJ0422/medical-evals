@@ -334,7 +334,7 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
             success_count=summary.success_count,
             failed_count=summary.failed_count,
             retry_count=summary.retry_count,
-            total_count=summary.total_count,
+            total_count=len(samples),
             total_score=summary.total_score,
             dimension_scores=summary.dimensions,
             error_categories=summary.error_categories,

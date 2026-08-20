@@ -219,5 +219,6 @@ def test_medqa_max_samples_and_cancellation_remain_serial(monkeypatch):
 
     result = adapter.run(make_task(max_samples=2), lambda _: None, is_cancelled)
 
+    assert result.total_count == 2
     assert len(client.requests) == 1
     assert len(result.samples) == 1
