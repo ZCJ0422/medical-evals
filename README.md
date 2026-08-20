@@ -43,6 +43,22 @@ Directory responsibilities are intentionally separated:
 - `tests/`: unit, package, adapter, metric, and integration test organization.
 - `docs/`: project and framework documentation.
 
+### Shared evaluation core and entry points
+
+MedQA now has one dependency-neutral evaluation core shared by the external
+`oaieval` CLI and the internal Workbench. The core owns OpenAI-compatible
+model requests, retry/error normalization, per-sample prompting/parsing and
+evaluation, and aggregate metrics. The two entry points deliberately retain
+their own orchestration: the CLI keeps OpenAI Evals scheduling and Recorder
+integration, while the Workbench keeps its queue, cancellation, checkpoints,
+artifacts, and serial progress reporting.
+
+HealthBench is not part of this migration yet. Its CLI and Workbench paths
+continue to retain their existing independent evaluation and compatibility
+semantics, including the Workbench's legacy completion-call compatibility
+layer. A future HealthBench migration can adopt the shared core without
+changing its public API or benchmark workflow.
+
 ## Development
 
 To get the latest project snapshot without downloading the full Git history:
