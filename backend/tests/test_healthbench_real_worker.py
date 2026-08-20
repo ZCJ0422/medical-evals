@@ -120,8 +120,10 @@ def test_healthbench_persists_per_sample_errors(tmp_path, monkeypatch):
 
     record = (tmp_path / "artifacts" / task.task_id / "samples.jsonl").read_text(encoding="utf-8")
     log = (tmp_path / "artifacts" / task.task_id / "run.log").read_text(encoding="utf-8")
-    assert "401 Client Error: Unauthorized" in record
-    assert "401 Client Error: Unauthorized" in log
+    assert "401 Client Error: Unauthorized" not in record
+    assert '"error_category": "request_error"' in record
+    assert "401 Client Error: Unauthorized" not in log
+    assert "[sample 1] failed" in log
 
 
 def test_healthbench_retries_the_complete_sample_flow(tmp_path, monkeypatch):

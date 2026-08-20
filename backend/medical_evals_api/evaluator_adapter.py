@@ -12,7 +12,11 @@ from medical_evals.core.medqa import (
     evaluate_medqa_sample,
     make_safe_medqa_error,
 )
-from medical_evals.core.models import EvaluationEvent, MedQASampleResult
+from medical_evals.core.healthbench import (
+    aggregate_healthbench,
+    evaluate_healthbench_sample,
+)
+from medical_evals.core.models import CompletionRequest, EvaluationEvent, HealthBenchSampleResult, MedQASampleResult, ModelResponse
 from medical_evals.datasets.medqa import load_medqa_samples
 from medical_evals.datasets.healthbench import load_healthbench_samples
 from medical_evals.judges.rubric import build_rubric_judge_prompt, parse_rubric_judgment
@@ -21,8 +25,34 @@ from medical_evals.judges.rubric import build_rubric_judge_prompt, parse_rubric_
 SAMPLE_MAX_RETRIES = 2
 
 
-def _healthbench_prompt(sample: dict) -> list[dict]:
-    return [dict(message) for message in sample["prompt"]]
+class _WorkbenchModelClient:
+    """Adapt legacy injected Workbench fakes to the shared core protocol."""
+
+    def __init__(self, client):
+        self.client = client
+
+    def complete(self, request: CompletionRequest, on_event=None) -> ModelResponse:
+        if hasattr(self.client, "_complete_shared"):
+            response = self.client.complete(request, on_event=on_event)
+        else:
+            try:
+                response = self.client.complete(
+                    request.prompt,
+                    model=request.model,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                )
+            except Exception as error:
+                if not hasattr(error, "retryable"):
+                    error.retryable = True
+                raise
+        if isinstance(response, ModelResponse):
+            return response
+        return ModelResponse(
+            text=str(response or ""),
+            model=request.model,
+            retry_count=int(getattr(self.client, "last_retry_count", 0)),
+        )
 
 
 def serialize_medqa_result(
@@ -90,100 +120,13 @@ def deserialize_medqa_record(record: dict) -> MedQASampleResult:
     )
 
 
-def _judge_healthbench_rubric(judge, sample: dict, answer: str, rubric: dict, model: str, on_event=None) -> dict:
-    prompt = build_rubric_judge_prompt(sample["prompt"], answer, rubric["criterion"])
-    for attempt in range(2):
-        if on_event:
-            on_event("[judge] request started")
-        raw = judge.complete(prompt, model=model, temperature=0.0, max_tokens=5120)
-        if on_event:
-            on_event("[judge] request completed")
-        try:
-            return parse_rubric_judgment(raw)
-        except ValueError:
-            if on_event:
-                on_event(f"[judge] result invalid (attempt {attempt + 1}/2)")
-            if attempt == 1:
-                raise
-    raise RuntimeError("unreachable")
-
-
-def _healthbench_score_details(rubrics: list[dict], judgments: list[dict]) -> dict[str, float]:
-    if len(rubrics) != len(judgments):
-        raise ValueError("rubrics and judgments must have the same length")
-    achieved = 0.0
-    positive_max = 0.0
-    for rubric, judgment in zip(rubrics, judgments):
-        points = float(rubric["points"])
-        if points > 0:
-            positive_max += points
-        if judgment.get("criteria_met") is True:
-            achieved += points
-    return {
-        "achieved": achieved,
-        "positive_max": positive_max,
-        "score": achieved / positive_max if positive_max else 0.0,
-    }
-
-
-def _healthbench_tag_scores(rubrics: list[dict], judgments: list[dict]) -> dict[str, float]:
-    grouped: dict[str, list[tuple[dict, dict]]] = {}
-    for rubric, judgment in zip(rubrics, judgments):
-        for tag in rubric.get("tags", []):
-            grouped.setdefault(tag, []).append((rubric, judgment))
-    return {
-        tag: _healthbench_score_details(
-            [item[0] for item in items], [item[1] for item in items]
-        )["score"]
-        for tag, items in grouped.items()
-    }
-
-
-def _evaluate_healthbench_sample(target, judge, sample: dict, target_model: str, judge_model: str, sample_index: int | None = None, on_event=None) -> tuple[dict, int]:
-    """Evaluate one sample, retrying the complete target+judge flow on failure."""
-    last_error: Exception | None = None
-    for attempt in range(SAMPLE_MAX_RETRIES + 1):
-        try:
-            if on_event:
-                on_event("[target] request started")
-            answer = target.complete(_healthbench_prompt(sample), model=target_model, temperature=0.1, max_tokens=5120)
-            if on_event:
-                on_event("[target] request completed")
-            judgments = [_judge_healthbench_rubric(judge, sample, answer, rubric, judge_model, on_event) for rubric in sample["rubrics"]]
-            score_details = _healthbench_score_details(sample["rubrics"], judgments)
-            tag_scores = _healthbench_tag_scores(sample["rubrics"], judgments)
-            return {
-                "raw_output": answer,
-                "rubric_judgments": judgments,
-                "score": score_details["score"],
-                "achieved": score_details["achieved"],
-                "positive_max": score_details["positive_max"],
-                "tag_scores": tag_scores,
-            }, attempt
-        except Exception as error:
-            last_error = error
-            if attempt < SAMPLE_MAX_RETRIES:
-                if on_event:
-                    on_event(f"[retry] sample attempt={attempt + 2}/{SAMPLE_MAX_RETRIES + 1} reason={_error_category(error)}")
-                time.sleep(2 ** attempt)
-    raise last_error or RuntimeError("HealthBench sample evaluation failed")
-
-
-def _aggregate_healthbench_scores(scores: list[float]) -> float:
-    if not scores:
-        return 0.0
-    return min(1.0, max(0.0, sum(float(score) for score in scores) / len(scores)))
-
-
 def healthbench_metrics(records: list[dict]) -> dict[str, object]:
     """Aggregate completed HealthBench samples using their rubric scores."""
     scored = [record for record in records if "score" in record]
-    score = _aggregate_healthbench_scores([record["score"] for record in scored])
+    score = min(1.0, max(0.0, sum(float(record["score"]) for record in scored) / len(scored))) if scored else 0.0
     tags = sorted({tag for record in scored for tag in record.get("tag_scores", {})})
     tag_scores = {
-        tag: _aggregate_healthbench_scores(
-            [record["tag_scores"][tag] for record in scored if tag in record.get("tag_scores", {})]
-        )
+        tag: min(1.0, max(0.0, sum(float(record["tag_scores"][tag]) for record in scored if tag in record.get("tag_scores", {})) / len([record for record in scored if tag in record.get("tag_scores", {})]))) if any(tag in record.get("tag_scores", {}) for record in scored) else 0.0
         for tag in tags
     }
     return {
@@ -192,19 +135,6 @@ def healthbench_metrics(records: list[dict]) -> dict[str, object]:
         "completed": len(scored),
         "failed": sum(1 for record in records if record.get("error")),
     }
-
-
-def _error_category(error: Exception) -> str:
-    message = str(error).lower()
-    if "401" in message or "unauthorized" in message or "api key" in message:
-        return "authentication_error"
-    if "404" in message or "not found" in message:
-        return "model_or_endpoint_error"
-    if "nodename" in message or "connect" in message or "timeout" in message:
-        return "network_error"
-    return "request_error"
-
-
 def healthbench_samples_path(dataset_version_id: str):
     """Resolve a HealthBench version to the data file it actually represents."""
     sources = {
@@ -217,6 +147,47 @@ def healthbench_samples_path(dataset_version_id: str):
         return sources[dataset_version_id]
     except KeyError as error:
         raise ValueError(f"Unsupported HealthBench dataset version: {dataset_version_id}") from error
+
+
+def serialize_healthbench_result(index: int, sample: dict, result: HealthBenchSampleResult) -> dict:
+    error = result.error
+    return {
+        "index": index,
+        "sample_id": result.sample_id,
+        "predicted": result.raw_output,
+        "rubric_results": list(result.rubric_judgments),
+        "achieved": result.achieved,
+        "positive_max": result.positive_max,
+        "score": result.score,
+        "tag_scores": result.tag_scores,
+        "error": error.message if error else None,
+        "error_category": error.category if error else None,
+        "error_stage": error.stage if error else None,
+        "error_status_code": error.status_code if error else None,
+        "retry_count": result.retry_count,
+    }
+
+
+def _deserialize_healthbench_record(record: dict) -> HealthBenchSampleResult:
+    error = None
+    if record.get("error"):
+        error = make_safe_medqa_error(
+            category=str(record.get("error_category") or "request_error"),
+            stage=str(record.get("error_stage") or "target"),
+            retry_count=int(record.get("retry_count", 0)),
+            status_code=record.get("error_status_code"),
+        )
+    return HealthBenchSampleResult(
+        sample_id=str(record.get("sample_id", "")),
+        raw_output=str(record.get("predicted", "")),
+        rubric_judgments=tuple(record.get("rubric_results", [])),
+        score=record.get("score"),
+        achieved=record.get("achieved"),
+        positive_max=record.get("positive_max"),
+        tag_scores=dict(record.get("tag_scores", {})),
+        retry_count=int(record.get("retry_count", 0)),
+        error=error,
+    )
 
 
 @dataclass(frozen=True)
@@ -279,12 +250,13 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
         sample_number: int,
         total_samples: int,
     ) -> None:
+        log_stage = "target" if event.stage == "request" else event.stage
         if event.kind == "request_started":
-            self._log("[target] request started")
+            self._log(f"[{log_stage}] request started")
         elif event.kind == "request_completed":
-            self._log("[target] request completed")
+            self._log(f"[{log_stage}] request completed")
         elif event.kind == "request_failed":
-            self._log(f"[target] request failed: {event.category or 'request_error'}")
+            self._log(f"[{log_stage}] request failed: {event.category or 'request_error'}")
         elif event.kind == "retry":
             self._log(
                 f"[retry] sample {sample_number}/{total_samples} "
@@ -408,45 +380,69 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
             samples = samples[:task.max_samples]
         target = self.target_client or OpenAICompatibleClient(task.target_base_url, decrypt_secret(task.target_api_key_enc))
         judge = self.judge_client or OpenAICompatibleClient(task.judge_base_url, decrypt_secret(task.judge_api_key_enc))
-        completed = failed = 0
-        records = []
-        error_categories = {}
-        total_retries = 0
+        target_core = _WorkbenchModelClient(target)
+        judge_core = _WorkbenchModelClient(judge)
         checkpoint = getattr(self, "checkpoint", {})
+        results_by_index: dict[int, HealthBenchSampleResult] = {}
+        records_by_index: dict[int, dict] = {}
+        for checkpoint_index, record in checkpoint.items():
+            if 0 <= checkpoint_index < len(samples):
+                result = _deserialize_healthbench_record(record)
+                results_by_index[checkpoint_index] = result
+                records_by_index[checkpoint_index] = record
+        initial = aggregate_healthbench(list(results_by_index.values()))
+        on_progress(TaskProgress(
+            completed_count=len(results_by_index),
+            total_count=len(samples),
+            progress_percent=len(results_by_index) / len(samples) * 100 if samples else 0,
+            success_count=initial.success_count,
+            failed_count=initial.failed_count,
+            retry_count=initial.retry_count,
+        ))
         for index, sample in enumerate(samples, start=1):
-            if is_cancelled(): break
-            if index - 1 in checkpoint:
-                record = checkpoint[index - 1]
-                records.append(record)
-                completed += 1
-                total_retries += int(record.get("retry_count", 0))
-                on_progress(TaskProgress(completed_count=index, total_count=len(samples), progress_percent=index / len(samples) * 100, success_count=completed, failed_count=failed, retry_count=total_retries))
+            sample_index = index - 1
+            if is_cancelled():
+                break
+            if sample_index in checkpoint:
                 continue
-            record = {"index": index - 1, "sample_id": sample["prompt_id"], "predicted": None, "correct": False, "parse_failed": False, "error": None, "retry_count": 0}
-            try:
-                self._log(f"[sample {index}/{len(samples)}] started")
-                self._stage("target_model")
-                result, retries = _evaluate_healthbench_sample(target, judge, sample, task.target_model_id, task.judge_model_id, index, self._log)
-                total_retries += retries
-                record.update(result, retry_count=retries)
-                completed += 1
-                self._log(f"[score] sample_score={result['score']:.4f}")
-            except Exception as error:
-                total_retries += SAMPLE_MAX_RETRIES
-                failed += 1
-                category = _error_category(error)
-                error_categories[category] = error_categories.get(category, 0) + 1
-                record.update({"raw_output": "", "error": str(error), "error_category": category, "retry_count": SAMPLE_MAX_RETRIES})
-                self._log(f"[sample {index}/{len(samples)}] failed: {category}")
-            records.append(record)
+            self._log(f"[sample {index}/{len(samples)}] started")
+            self._stage("target_model")
+            result = evaluate_healthbench_sample(
+                target_core,
+                judge_core,
+                sample,
+                target_model=task.target_model_id,
+                judge_model=task.judge_model_id,
+                on_event=lambda event, sample_number=index: self._core_event(
+                    event, sample_number=sample_number, total_samples=len(samples)
+                ),
+            )
+            results_by_index[sample_index] = result
+            record = serialize_healthbench_result(sample_index, sample, result)
+            records_by_index[sample_index] = record
+            if result.error is None:
+                self._log(f"[score] sample_score={result.score or 0.0:.4f}")
             if self.on_sample:
                 self._stage("saving")
                 self.on_sample(record)
-            if not record.get("error"):
-                self._log(f"[sample {index}/{len(samples)}] completed")
-            on_progress(TaskProgress(completed_count=index, total_count=len(samples), progress_percent=index / len(samples) * 100, success_count=completed, failed_count=failed))
-        metrics = healthbench_metrics(records)
-        score = metrics["score"]
-        dimensions = {"rubric_score": score}
-        dimensions.update({f"tag:{tag}": tag_score for tag, tag_score in metrics["tag_scores"].items()})
-        return EvaluationRunResult(success_count=completed, failed_count=failed, retry_count=total_retries, total_count=len(samples), total_score=score, dimension_scores=dimensions, error_categories=error_categories, accuracy=score, parse_success_rate=completed / len(samples) if samples else None, request_success_count=completed, samples=records)
+            self._log(f"[sample {index}/{len(samples)}] {'completed' if result.error is None else 'failed'}")
+            current = aggregate_healthbench(list(results_by_index.values()))
+            on_progress(TaskProgress(
+                completed_count=len(results_by_index), total_count=len(samples),
+                progress_percent=len(results_by_index) / len(samples) * 100 if samples else 0,
+                success_count=current.success_count, failed_count=current.failed_count,
+                retry_count=current.retry_count,
+            ))
+        summary = aggregate_healthbench(list(results_by_index.values()))
+        return EvaluationRunResult(
+            success_count=summary.success_count,
+            failed_count=summary.failed_count,
+            retry_count=summary.retry_count,
+            total_count=len(samples),
+            total_score=summary.total_score,
+            dimension_scores=summary.dimensions,
+            error_categories=summary.error_categories,
+            accuracy=summary.total_score,
+            request_success_count=summary.request_success_count,
+            samples=[records_by_index[index] for index in sorted(records_by_index)],
+        )

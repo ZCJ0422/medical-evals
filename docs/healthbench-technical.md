@@ -1,5 +1,10 @@
 # HealthBench 技术文档
 
+当前 CLI 与 Workbench 共用 `medical_evals/core/healthbench.py` 中的目标模型
+请求、rubric judge、JSON 解析、评分和 tag 聚合逻辑；CLI/Workbench 仅负责各自的
+Recorder 或任务队列、checkpoint、artifact 和进度编排。模型请求统一经过共享的
+OpenAI-compatible client，judge JSON 无效时最多额外请求一次。
+
 ## 1. 评测目标
 
 HealthBench 是开放式医学问答评测。模型针对用户的医学问题生成自然语言回答，

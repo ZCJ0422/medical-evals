@@ -2,69 +2,22 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Mapping
 from typing import Any
+
+from medical_evals.core.healthbench import build_rubric_judge_prompt as _build_prompt
+from medical_evals.core.healthbench import parse_rubric_judgment as _parse_judgment
 
 
 def build_rubric_judge_prompt(
     prompt: list[dict], answer: str, criterion: str
 ) -> list[dict]:
     """Build a judge prompt for one rubric criterion."""
-    conversation = json.dumps(prompt, ensure_ascii=False)
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You are a strict medical evaluation judge. Determine whether the candidate "
-                "answer satisfies the single rubric criterion. Return only a JSON object with "
-                "a boolean criteria_met and a concise explanation string."
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"Conversation: {conversation}\n\n"
-                f"Candidate answer:\n{answer}\n\n"
-                f"Rubric criterion:\n{criterion}"
-            ),
-        },
-    ]
+    return _build_prompt(prompt, answer, criterion)
 
 
 def parse_rubric_judgment(text: str) -> dict:
     """Parse a judge JSON response with optional reasoning or Markdown around it."""
-    if not isinstance(text, str):
-        raise ValueError("judge response must be a string")
-    value = text.strip()
-    decoder = json.JSONDecoder()
-    parsed = None
-    last_error = None
-    for offset, character in enumerate(value):
-        if character != "{":
-            continue
-        try:
-            candidate, _ = decoder.raw_decode(value, offset)
-        except json.JSONDecodeError as exc:
-            last_error = exc
-            continue
-        if isinstance(candidate, Mapping):
-            parsed = candidate
-            break
-    if parsed is None:
-        detail = last_error or json.JSONDecodeError("Expecting JSON object", value, 0)
-        raise ValueError(f"invalid judge JSON: {detail}") from detail
-    if not isinstance(parsed, Mapping):
-        raise ValueError("judge response must be a JSON object")
-    criteria_met = parsed.get("criteria_met")
-    if not isinstance(criteria_met, bool):
-        raise ValueError("criteria_met must be a boolean")
-    explanation = parsed.get("explanation", "")
-    if explanation is None:
-        explanation = ""
-    if not isinstance(explanation, str):
-        raise ValueError("explanation must be a string")
-    return {"criteria_met": criteria_met, "explanation": explanation}
+    return _parse_judgment(text)
 
 
 def resolve_judge_completion_fn(value: Any, registry: Any):

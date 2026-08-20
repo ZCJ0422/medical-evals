@@ -9,6 +9,13 @@ from .models import (
     ModelResponse,
     SampleError,
 )
+from .healthbench import (
+    aggregate_healthbench,
+    build_healthbench_prompt,
+    build_rubric_judge_prompt,
+    evaluate_healthbench_sample,
+    parse_rubric_judgment,
+)
 from .protocols import EventCallback, ModelClient
 from .retry import (
     classify_error,
@@ -26,6 +33,11 @@ __all__ = [
     "ModelClient",
     "ModelResponse",
     "SampleError",
+    "aggregate_healthbench",
+    "build_healthbench_prompt",
+    "build_rubric_judge_prompt",
+    "evaluate_healthbench_sample",
+    "parse_rubric_judgment",
     "EventCallback",
     "classify_error",
     "classify_status_code",
