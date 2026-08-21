@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from medical_evals_api.repositories.tasks import TaskRepository
 from medical_evals_api.schemas.common import TaskProgress, TaskStatus
 
@@ -56,6 +58,31 @@ def test_two_worker_repositories_claim_distinct_tasks(tmp_path):
     assert first_claim.task_id != second_claim.task_id
     assert first_claim.lease_owner == "worker-a"
     assert second_claim.lease_owner == "worker-b"
+
+
+def test_concurrent_workers_claim_each_task_once(tmp_path):
+    database = tmp_path / "tasks.sqlite3"
+    seed = TaskRepository(database)
+    for index in range(24):
+        seed.create(name=f"task-{index}", target_model_id="model", judge_model_id="", dataset_version_id="dataset", rubric_id="rubric")
+
+    def claim_for_worker(worker_number):
+        repo = TaskRepository(database)
+        claimed = []
+        while True:
+            task = repo.claim_next(f"worker-{worker_number}")
+            if task is None:
+                return claimed
+            claimed.append((task.task_id, task.lease_owner))
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(claim_for_worker, range(6)))
+
+    claims = [claim for worker_claims in results for claim in worker_claims]
+    assert len(claims) == 24
+    assert len({task_id for task_id, _ in claims}) == 24
+    assert {owner for _, owner in claims} <= {f"worker-{index}" for index in range(6)}
+    assert all(owner for _, owner in claims)
 
 
 def test_expired_worker_lease_is_failed_and_cannot_be_completed_by_old_owner(tmp_path):
