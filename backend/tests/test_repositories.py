@@ -26,3 +26,14 @@ def test_task_repository_claim_next_atomically_marks_task_running(tmp_path):
     assert claimed.status == TaskStatus.RUNNING
     assert repo.claim_next().task_id == second.task_id
     assert repo.claim_next() is None
+
+
+def test_terminal_status_does_not_overwrite_cancellation(tmp_path):
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(name="cancelled", target_model_id="model", judge_model_id="", dataset_version_id="dataset", rubric_id="rubric")
+    repo.set_status(task.task_id, TaskStatus.CANCELLED)
+
+    result = repo.set_status_if_not_cancelled(task.task_id, TaskStatus.COMPLETED)
+
+    assert result.status == TaskStatus.CANCELLED
+    assert repo.get(task.task_id).status == TaskStatus.CANCELLED

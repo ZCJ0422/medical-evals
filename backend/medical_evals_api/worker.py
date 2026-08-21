@@ -111,4 +111,7 @@ class Worker:
         artifacts.write_summary({"task_id": task_id, "total_score": result.total_score, "accuracy": result.accuracy, "parse_success_rate": result.parse_success_rate, "completed_count": result.total_count, "failed_count": result.failed_count, "retry_count": result.retry_count, "request_success_count": result.request_success_count or result.success_count, "parse_failed_count": result.parse_failed_count})
         artifacts.log(f"[summary] completed={result.success_count} failed={result.failed_count} retries={result.retry_count} total_score={result.total_score:.4f}")
         artifacts.log("Run completed")
-        return self.repository.set_status(task_id, TaskStatus.PARTIAL_FAILED if result.failed_count else TaskStatus.COMPLETED)
+        return self.repository.set_status_if_not_cancelled(
+            task_id,
+            TaskStatus.PARTIAL_FAILED if result.failed_count else TaskStatus.COMPLETED,
+        )

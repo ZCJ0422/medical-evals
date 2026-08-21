@@ -122,3 +122,19 @@ class TaskRepository:
         with connect(self.database_path) as db:
             db.execute("UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE task_id = ?", (status.value, error, updated.updated_at, task_id))
         return updated
+
+    def set_status_if_not_cancelled(self, task_id: str, status: TaskStatus, error: str | None = None) -> EvaluationTask:
+        """Set a terminal status without overwriting a concurrent cancellation."""
+        task = self.get(task_id)
+        if task is None:
+            raise KeyError(task_id)
+        updated_at = utc_now()
+        with connect(self.database_path) as db:
+            updated = db.execute(
+                "UPDATE tasks SET status = ?, error = ?, updated_at = ? "
+                "WHERE task_id = ? AND status != ?",
+                (status.value, error, updated_at, task_id, TaskStatus.CANCELLED.value),
+            )
+        if updated.rowcount == 0:
+            return self.get(task_id) or task
+        return replace(task, status=status, error=error, updated_at=updated_at)
