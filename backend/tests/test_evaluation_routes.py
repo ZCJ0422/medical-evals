@@ -98,6 +98,23 @@ def test_create_evaluation_accepts_explicit_credential_environment_names(tmp_pat
     assert task.target_api_key_env == "TARGET_KEY"
 
 
+def test_preflight_rejects_invalid_credential_environment_name(tmp_path, monkeypatch):
+    from medical_evals_api import config
+    monkeypatch.setattr(config.settings, "database_path", tmp_path / "tasks.sqlite3")
+    response = client.post("/api/evaluations/preflight", headers=admin_headers(), json={
+        "name": "bad-env-name",
+        "target_model_id": "model",
+        "dataset_version_id": "medical-medqa.dev.v1",
+        "rubric_id": "medical-medqa.default",
+        "target_base_url": "https://api.example.com/v1",
+        "target_api_key_env": "TARGET-KEY",
+    })
+
+    assert response.status_code == 200
+    assert response.json()["ready"] is False
+    assert "Target API Key environment name is invalid" in response.json()["errors"]
+
+
 def test_retry_completed_evaluation_creates_new_queued_task(tmp_path, monkeypatch):
     from medical_evals_api import config
     monkeypatch.setattr(config.settings, "database_path", tmp_path / "tasks.sqlite3")

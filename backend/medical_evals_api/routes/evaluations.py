@@ -16,6 +16,7 @@ from .catalog import DATASETS
 router = APIRouter(prefix="/api/evaluations", tags=["evaluations"])
 
 _RETRY_SUFFIX = re.compile(r"\s-\sretry(\d*)$", re.IGNORECASE)
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DATASET_RUBRICS = {item.dataset_id: item.rubric_id for item in DATASETS}
 
 
@@ -60,6 +61,10 @@ def preflight(payload: EvaluationCreate, _: AdminIdentity = Depends(require_admi
             errors.append("Unsupported dataset family")
         elif payload.rubric_id != expected_rubric:
             errors.append(f"Rubric must be {expected_rubric} for this dataset")
+    if payload.target_api_key_env and not _ENV_NAME.fullmatch(payload.target_api_key_env):
+        errors.append("Target API Key environment name is invalid")
+    if payload.judge_api_key_env and not _ENV_NAME.fullmatch(payload.judge_api_key_env):
+        errors.append("Judge API Key environment name is invalid")
     if not payload.target_api_key.strip() and not payload.target_api_key_env.strip():
         errors.append("Target API Key is required")
     target_url = urlparse(payload.target_base_url.strip())
