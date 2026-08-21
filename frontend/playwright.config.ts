@@ -4,6 +4,9 @@ export default defineConfig({
   testDir: "./tests",
   testMatch: "**/*.spec.ts",
   testIgnore: ["**/._*.spec.ts"],
+  // The API fixture and SQLite database are single-machine shared state.
+  workers: 1,
+  fullyParallel: false,
   globalSetup: "./tests/global-setup.ts",
   use: {
     baseURL: "http://127.0.0.1:3000",

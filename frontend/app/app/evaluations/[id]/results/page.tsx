@@ -21,20 +21,23 @@ function copyText(text: string) {
 
 export default function ResultsPage() {
   const { t } = useLocale(); const params = useParams<{ id: string }>();
-  const [summary, setSummary] = useState<ResultSummary | null>(null); const [samples, setSamples] = useState<SampleRecord[]>([]); const [sampleTotal, setSampleTotal] = useState(0); const [runLog, setRunLog] = useState(""); const [error, setError] = useState(""); const [reportState, setReportState] = useState<"idle" | "busy">("idle"); const [copied, setCopied] = useState<string | null>(null); const [filter, setFilter] = useState<"all" | "issues" | "low">("all"); const [followLogs, setFollowLogs] = useState(true); const logRef = useRef<HTMLPreElement>(null);
+  const [summary, setSummary] = useState<ResultSummary | null>(null); const [samples, setSamples] = useState<SampleRecord[]>([]); const [sampleTotal, setSampleTotal] = useState(0); const [runLog, setRunLog] = useState(""); const [error, setError] = useState(""); const [reportState, setReportState] = useState<"idle" | "busy">("idle"); const [copied, setCopied] = useState<string | null>(null); const [filter, setFilter] = useState<"all" | "issues" | "low">("all"); const [followLogs, setFollowLogs] = useState(true); const logRef = useRef<HTMLPreElement>(null); const sampleTotalRef = useRef(0); const samplesLoadedRef = useRef(false);
   const isLive = summary?.status === "queued" || summary?.status === "running";
 
   const loadSamples = useCallback(async (offset: number, append = false) => {
     const records = await api<SamplesResponse>(`/api/evaluations/${params.id}/samples?limit=${PAGE_SIZE}&offset=${offset}`);
     setSamples((current) => append ? [...current, ...records.samples] : records.samples);
-    setSampleTotal(records.total ?? (append ? offset + records.samples.length : records.samples.length));
+    const total = records.total ?? (append ? offset + records.samples.length : records.samples.length);
+    sampleTotalRef.current = total;
+    samplesLoadedRef.current = true;
+    setSampleTotal(total);
   }, [params.id]);
   const load = useCallback(async (includeSamples = true) => {
     const [result, log] = await Promise.all([api<ResultSummary>(`/api/evaluations/${params.id}/results`), apiText(`/api/evaluations/${params.id}/log`)]);
     setSummary(result); setRunLog(log); if (includeSamples) await loadSamples(0); return result;
   }, [loadSamples, params.id]);
   useEffect(() => { load().catch(() => setError(t("unableLoadResults"))); }, [load, t]);
-  useEffect(() => { if (!isLive) return; const timer = window.setInterval(() => { load(false).then((result) => { const persistedSampleCount = result.completed_count + result.failed_count; if (persistedSampleCount !== sampleTotal) return loadSamples(0); return undefined; }).catch(() => undefined); }, 3000); return () => window.clearInterval(timer); }, [isLive, load, loadSamples, sampleTotal]);
+  useEffect(() => { if (!isLive) return; const timer = window.setInterval(() => { load(false).then((result) => { if (!samplesLoadedRef.current) return undefined; const persistedSampleCount = result.completed_count + result.failed_count; if (persistedSampleCount !== sampleTotalRef.current) return loadSamples(0); return undefined; }).catch(() => undefined); }, 3000); return () => window.clearInterval(timer); }, [isLive, load, loadSamples]);
   useEffect(() => { if (followLogs && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [followLogs, runLog]);
 
   const visibleSamples = useMemo(() => samples.filter((sample) => filter === "all" || (filter === "issues" ? Boolean(sample.error || sample.parse_failed) : typeof sample.score === "number" && sample.score < .5)), [filter, samples]);

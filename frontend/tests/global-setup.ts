@@ -9,6 +9,7 @@ export default function globalSetup() {
     "from medical_evals_api.evaluator_adapter import DryRunEvaluationAdapter",
     "from pathlib import Path",
     "repo = TaskRepository(Path('data/medical-evals.sqlite3'))",
+    "[repo.delete(existing.task_id) for existing in repo.list() if existing.name in {'E2E completed result fixture', 'E2E running result fixture'}]",
     "task = repo.create(name='E2E completed result fixture', target_model_id='fixture-model', judge_model_id='', dataset_version_id='medical-medqa.dev.v1', rubric_id='medical-medqa.default', max_samples=1)",
     "Worker(repo, adapter=DryRunEvaluationAdapter()).run_task(task.task_id)",
     "running = repo.create(name='E2E running result fixture', target_model_id='fixture-model', judge_model_id='', dataset_version_id='medical-medqa.dev.v1', rubric_id='medical-medqa.default', max_samples=2)",
