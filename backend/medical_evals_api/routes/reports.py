@@ -20,6 +20,9 @@ def generate_report(task_id: str, _: AdminIdentity = Depends(require_admin)):
 
 @router.get("/{task_id}/report")
 def get_report(task_id: str, _: AdminIdentity = Depends(require_admin)):
+    repository = TaskRepository(settings.database_path, settings.artifact_dir)
+    if repository.get(task_id) is None:
+        raise HTTPException(status_code=404, detail="Evaluation task not found")
     path = settings.artifact_dir / task_id / "report.html"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Report not generated")
