@@ -26,6 +26,8 @@ medical-evals/
 │   ├── configs
 │   ├── runs
 │   └── snapshots
+├── backend/                        # Workbench API, Worker, SQLite, artifacts
+├── frontend/                       # Next.js administrator workbench
 ├── tests/                          # Unit and integration tests
 └── docs/                           # Project documentation
 ```
@@ -40,6 +42,10 @@ Directory responsibilities are intentionally separated:
   evaluations, datasets, models, and judges. Pass it to the OpenAI Evals CLI
   with `--registry_path ./registry`.
 - `experiments/`: experiment configurations, run records, and snapshots.
+- `backend/`: the authenticated Workbench API, SQLite task repository, lease-aware
+  local queue, Worker, checkpoints, and protected reports/artifacts.
+- `frontend/`: the Next.js administrator UI. It communicates with the backend
+  only through the authenticated API and does not contain benchmark secrets.
 - `tests/`: unit, package, adapter, metric, and integration test organization.
 - `docs/`: project and framework documentation.
 
@@ -81,6 +87,27 @@ deployment. The API and worker boundaries are separate from the existing
 evaluation code, and the SQLite queue supports lease-based coordination
 between multiple local Worker processes. Multi-machine deployment still
 requires an external queue and database.
+
+The Workbench execution path is:
+
+```text
+Frontend → authenticated API → SQLite queued task
+                                ↓
+                         lease-aware Worker
+                                ↓
+             shared evaluation core + provider endpoint
+                                ↓
+                    JSONL artifacts + aggregate result
+```
+
+Worker leases default to 300 seconds and can be configured with
+`MEDICAL_EVALS_WORKER_LEASE_SECONDS` (30 seconds to 24 hours). A Worker renews
+its lease while reporting progress; an expired lease is failed conservatively,
+and an old Worker can no longer write progress, results, or terminal state.
+Interrupted tasks retain their checkpoint and artifacts and require an explicit
+retry. The queue implementation is isolated behind `TaskQueue`, so a future
+Redis/PostgreSQL queue can replace SQLite without changing the evaluation core
+or frontend contract.
 
 Install the backend dependencies once, then initialize the local API database
 and start the API with:
@@ -146,6 +173,12 @@ answers, and complete Rubrics are protected backend data; ordinary result
 responses expose only aggregate metrics. The administrator-only raw-sample
 route is intentionally separate from the public result summary route.
 
+For HealthBench, the results page keeps the fixed metadata column separate from
+the horizontally scrollable sample content. The model's raw answer appears
+only in the scrollable content panel; persisted records use canonical
+`raw_output` and `rubric_judgments` fields, with legacy aliases retained for
+backward compatibility.
+
 The project uses `uv` for environment and lockfile management:
 
 ```bash
@@ -195,6 +228,22 @@ The `medical-openai-compatible` CompletionFn is registered in
 `registry/completion_fns/medical_openai_compatible.yaml`. The example
 metadata in `configs/medical_medqa_smoke.yaml` documents the dataset, Eval,
 model, CompletionFn, and single-sample runner settings.
+
+## Verification and releases
+
+The repository's release checks cover the root Python suite, backend tests,
+mypy, frontend typechecking/build, and Playwright browser regression tests:
+
+```bash
+uv run pytest -q
+cd backend && uv run pytest -q
+cd ../frontend && npm run typecheck && npm run build
+```
+
+The current published releases are [v3.0.1-baseline](https://github.com/ZCJ0422/medical-evals/releases/tag/v3.0.1-baseline),
+which records the remote baseline, and [v3.0.1-post1](https://github.com/ZCJ0422/medical-evals/releases/tag/v3.0.1-post1),
+which contains the unified core, Workbench hardening, lease-aware queue, and
+regression coverage described above.
 
 ## HealthBench open-ended smoke test
 
