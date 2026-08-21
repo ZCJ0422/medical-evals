@@ -56,6 +56,51 @@ class NeverCalledClient:
         raise AssertionError("a cancellation before the first sample must not call the model")
 
 
+class CapturingEnvironmentClient:
+    instances = []
+
+    def __init__(self, base_url, api_key, **kwargs):
+        del kwargs
+        self.base_url = base_url
+        self.api_key = api_key
+        self.__class__.instances.append(self)
+
+    def complete(self, request, on_event=None):
+        del request, on_event
+        return ModelResponse(text="C")
+
+    def close(self):
+        return None
+
+
+def test_worker_resolves_environment_backed_key_at_client_boundary(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEDICAL_EVALS_TEST_TARGET_KEY", "worker-env-key")
+    CapturingEnvironmentClient.instances = []
+    monkeypatch.setattr(
+        "medical_evals_api.evaluator_adapter.OpenAICompatibleClient",
+        CapturingEnvironmentClient,
+    )
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(
+        name="environment-backed smoke",
+        target_model_id="target",
+        judge_model_id="",
+        dataset_version_id="medical-medqa.dev.v1",
+        rubric_id="medical-medqa.default",
+        target_base_url="https://target.test/v1",
+        target_api_key_env="MEDICAL_EVALS_TEST_TARGET_KEY",
+        max_samples=1,
+    )
+
+    result = Worker(repo).run_task(task.task_id)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert len(CapturingEnvironmentClient.instances) == 1
+    client = CapturingEnvironmentClient.instances[0]
+    assert client.base_url == "https://target.test/v1"
+    assert client.api_key == "worker-env-key"
+
+
 def test_worker_runs_medqa_with_openai_compatible_adapter(tmp_path):
     repo = TaskRepository(tmp_path / "tasks.sqlite3")
     task = repo.create(name="real smoke", target_model_id="target", judge_model_id="judge", dataset_version_id="medical-medqa.dev.v1", rubric_id="medical-medqa.default", max_samples=1, target_base_url="https://target.test/v1", target_api_key_env="TARGET_KEY", judge_base_url="https://judge.test/v1", judge_api_key_env="JUDGE_KEY")
