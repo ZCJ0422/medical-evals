@@ -60,7 +60,7 @@ def preflight(payload: EvaluationCreate, _: AdminIdentity = Depends(require_admi
             errors.append("Unsupported dataset family")
         elif payload.rubric_id != expected_rubric:
             errors.append(f"Rubric must be {expected_rubric} for this dataset")
-    if not payload.target_api_key.strip():
+    if not payload.target_api_key.strip() and not payload.target_api_key_env.strip():
         errors.append("Target API Key is required")
     target_url = urlparse(payload.target_base_url.strip())
     if target_url.scheme not in {"http", "https"} or not target_url.netloc:
@@ -68,7 +68,7 @@ def preflight(payload: EvaluationCreate, _: AdminIdentity = Depends(require_admi
     needs_judge = not payload.dataset_version_id.startswith("medical-medqa")
     if needs_judge and not payload.judge_model_id.strip():
         errors.append("This dataset requires a Judge Model configuration")
-    if needs_judge and not payload.judge_api_key.strip():
+    if needs_judge and not payload.judge_api_key.strip() and not payload.judge_api_key_env.strip():
         errors.append("Judge API Key is required for this dataset")
     if needs_judge:
         judge_url = urlparse(payload.judge_base_url.strip())
@@ -92,7 +92,7 @@ def create_evaluation(payload: EvaluationCreate, _: AdminIdentity = Depends(requ
     dataset = next((item for item in DATASETS if item.dataset_version_id == payload.dataset_version_id), None)
     dataset_name = dataset.name if dataset else payload.dataset_version_id.split(".")[0]
     generated_name = f"{dataset_name}-{payload.target_model_id}-{datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d-%H%M%S')}"
-    task = repository().create(name=payload.name.strip() or generated_name, target_model_id=payload.target_model_id, judge_model_id=payload.judge_model_id, dataset_version_id=payload.dataset_version_id, rubric_id=payload.rubric_id, target_base_url=payload.target_base_url, target_api_key_enc=encrypt_secret(payload.target_api_key), judge_base_url=payload.judge_base_url, judge_api_key_enc=encrypt_secret(payload.judge_api_key) if payload.judge_api_key else "", max_samples=payload.max_samples)
+    task = repository().create(name=payload.name.strip() or generated_name, target_model_id=payload.target_model_id, judge_model_id=payload.judge_model_id, dataset_version_id=payload.dataset_version_id, rubric_id=payload.rubric_id, target_base_url=payload.target_base_url, target_api_key_env=payload.target_api_key_env.strip(), target_api_key_enc=encrypt_secret(payload.target_api_key) if payload.target_api_key else "", judge_base_url=payload.judge_base_url, judge_api_key_env=payload.judge_api_key_env.strip(), judge_api_key_enc=encrypt_secret(payload.judge_api_key) if payload.judge_api_key else "", max_samples=payload.max_samples)
     return _summary(task)
 
 

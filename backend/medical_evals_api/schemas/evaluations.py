@@ -9,8 +9,10 @@ class EvaluationCreate(BaseModel):
     rubric_id: str
     target_base_url: str = ""
     target_api_key: str = ""
+    target_api_key_env: str = Field(default="", max_length=128)
     judge_base_url: str = ""
     judge_api_key: str = ""
+    judge_api_key_env: str = Field(default="", max_length=128)
     max_samples: int | None = Field(default=None, ge=1, le=10000)
 
 

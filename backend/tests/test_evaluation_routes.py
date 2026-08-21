@@ -78,6 +78,26 @@ def test_create_direct_api_key_is_encrypted_and_not_returned(tmp_path, monkeypat
     assert "target-secret" not in row.text
 
 
+def test_create_evaluation_accepts_explicit_credential_environment_names(tmp_path, monkeypatch):
+    from medical_evals_api import config
+    monkeypatch.setattr(config.settings, "database_path", tmp_path / "tasks.sqlite3")
+    response = client.post("/api/evaluations", headers=admin_headers(), json={
+        "name": "env-backed",
+        "target_model_id": "model",
+        "dataset_version_id": "medical-medqa.dev.v1",
+        "rubric_id": "medical-medqa.default",
+        "target_base_url": "https://api.example.com/v1",
+        "target_api_key_env": "TARGET_KEY",
+    })
+
+    assert response.status_code == 201
+    task_id = response.json()["task_id"]
+    repo = __import__("medical_evals_api.repositories.tasks", fromlist=["TaskRepository"]).TaskRepository(config.settings.database_path)
+    task = repo.get(task_id)
+    assert task is not None
+    assert task.target_api_key_env == "TARGET_KEY"
+
+
 def test_retry_completed_evaluation_creates_new_queued_task(tmp_path, monkeypatch):
     from medical_evals_api import config
     monkeypatch.setattr(config.settings, "database_path", tmp_path / "tasks.sqlite3")
