@@ -109,15 +109,17 @@ To run real OpenAI-compatible evaluations, configure the target and Judge
 credentials in the protected wizard. The API accepts those values only over
 the authenticated request, encrypts them with `MEDICAL_EVALS_ENCRYPTION_SECRET`
 before persisting the task, and decrypts them only inside the Worker. They are
-never returned by task APIs or written to metadata, reports, or logs. For
-headless CLI-style runs, provider credentials may instead be supplied through
-the environment before starting the Worker:
+never returned by task APIs or written to metadata, reports, or logs. The
+Workbench Worker uses the encrypted credentials attached to each task; it does
+not infer provider keys from arbitrary environment variables. For headless
+external Evals CLI runs, configure the CLI's documented `OPENAI_*` variables
+separately:
 
 ```bash
-export MEDICAL_EVALS_TARGET_API_KEY="sk-target..."
-export MEDICAL_EVALS_JUDGE_API_KEY="sk-judge..."
-cd backend
-uv run python -m medical_evals_api.cli worker
+export OPENAI_API_KEY="sk-target..."
+export OPENAI_BASE_URL="https://example.com/v1"
+export OPENAI_MODEL="your-model"
+uv run oaieval ...
 ```
 
 For local configuration, copy `backend/.env.example` to `backend/.env` and
