@@ -14,7 +14,7 @@ export default defineConfig({
     headless: true,
   },
   webServer: [
-    { command: "npm run dev -- --hostname 127.0.0.1", url: "http://127.0.0.1:3000", reuseExistingServer: true, timeout: 120000 },
-    { command: "uv run python -m medical_evals_api.cli api", cwd: "../backend", url: "http://127.0.0.1:8000/healthz", reuseExistingServer: true, timeout: 120000 },
+    { command: "npm run dev -- --hostname 127.0.0.1", url: "http://127.0.0.1:3000", reuseExistingServer: !process.env.CI, timeout: 120000 },
+    { command: "uv run python -m medical_evals_api.cli api", cwd: "../backend", url: "http://127.0.0.1:8000/healthz", reuseExistingServer: !process.env.CI, timeout: 120000 },
   ],
 });
