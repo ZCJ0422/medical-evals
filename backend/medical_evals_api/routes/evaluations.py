@@ -137,8 +137,10 @@ def retry_evaluation(task_id: str, _: AdminIdentity = Depends(require_admin)) ->
         dataset_version_id=task.dataset_version_id,
         rubric_id=task.rubric_id,
         target_base_url=task.target_base_url,
+        target_api_key_env=task.target_api_key_env,
         target_api_key_enc=task.target_api_key_enc,
         judge_base_url=task.judge_base_url,
+        judge_api_key_env=task.judge_api_key_env,
         judge_api_key_enc=task.judge_api_key_enc,
         max_samples=task.max_samples,
     )

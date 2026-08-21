@@ -3,6 +3,7 @@ from medical_evals_api.queue import LocalTaskQueue
 from medical_evals_api.schemas.common import TaskStatus
 from medical_evals_api.evaluator_adapter import DryRunEvaluationAdapter, OpenAICompatibleEvaluationAdapter
 from medical_evals_api.worker import Worker
+from medical_evals_api.evaluator_adapter import _resolve_task_secret
 
 
 class FailingAdapter:
@@ -26,6 +27,12 @@ class StagedAdapter:
 
 def test_worker_defaults_to_real_evaluation_adapter(tmp_path):
     assert isinstance(Worker(TaskRepository(tmp_path / "tasks.sqlite3")).adapter, OpenAICompatibleEvaluationAdapter)
+
+
+def test_task_secret_resolution_prefers_encrypted_value_and_supports_env_fallback(monkeypatch):
+    monkeypatch.setenv("TARGET_KEY", "from-environment")
+
+    assert _resolve_task_secret("", "TARGET_KEY") == "from-environment"
 
 
 def test_worker_completes_dry_run(tmp_path):

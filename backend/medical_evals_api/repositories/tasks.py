@@ -20,9 +20,27 @@ class TaskRepository:
 
     def create(self, *, name: str, target_model_id: str, judge_model_id: str, dataset_version_id: str, rubric_id: str, target_base_url: str = "", target_api_key_enc: str = "", judge_base_url: str = "", judge_api_key_enc: str = "", target_api_key_env: str = "", judge_api_key_env: str = "", max_samples: int | None = None) -> EvaluationTask:
         now = utc_now()
-        task = EvaluationTask(uuid.uuid4().hex, name, target_model_id, judge_model_id, dataset_version_id, rubric_id, TaskStatus.QUEUED, TaskProgress(), now, now, None, target_base_url, target_api_key_enc, judge_base_url, judge_api_key_enc, max_samples)
+        task = EvaluationTask(
+            task_id=uuid.uuid4().hex,
+            name=name,
+            target_model_id=target_model_id,
+            judge_model_id=judge_model_id,
+            dataset_version_id=dataset_version_id,
+            rubric_id=rubric_id,
+            status=TaskStatus.QUEUED,
+            progress=TaskProgress(),
+            created_at=now,
+            updated_at=now,
+            target_base_url=target_base_url,
+            target_api_key_env=target_api_key_env,
+            target_api_key_enc=target_api_key_enc,
+            judge_base_url=judge_base_url,
+            judge_api_key_env=judge_api_key_env,
+            judge_api_key_enc=judge_api_key_enc,
+            max_samples=max_samples,
+        )
         with connect(self.database_path) as db:
-            db.execute("INSERT INTO tasks (task_id,name,target_model_id,judge_model_id,dataset_version_id,rubric_id,status,progress_json,created_at,updated_at,error,target_base_url,target_api_key_env,judge_base_url,judge_api_key_env,max_samples,target_api_key_enc,judge_api_key_enc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task.task_id, task.name, task.target_model_id, task.judge_model_id, task.dataset_version_id, task.rubric_id, task.status.value, task.progress.model_dump_json(), task.created_at, task.updated_at, task.error, target_base_url, "", judge_base_url, "", max_samples, target_api_key_enc, judge_api_key_enc))
+            db.execute("INSERT INTO tasks (task_id,name,target_model_id,judge_model_id,dataset_version_id,rubric_id,status,progress_json,created_at,updated_at,error,target_base_url,target_api_key_env,judge_base_url,judge_api_key_env,max_samples,target_api_key_enc,judge_api_key_enc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task.task_id, task.name, task.target_model_id, task.judge_model_id, task.dataset_version_id, task.rubric_id, task.status.value, task.progress.model_dump_json(), task.created_at, task.updated_at, task.error, target_base_url, target_api_key_env, judge_base_url, judge_api_key_env, max_samples, target_api_key_enc, judge_api_key_enc))
         return task
 
     def get(self, task_id: str) -> EvaluationTask | None:
@@ -30,7 +48,7 @@ class TaskRepository:
             row = db.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         if row is None:
             return None
-        return EvaluationTask(row["task_id"], row["name"], row["target_model_id"], row["judge_model_id"], row["dataset_version_id"], row["rubric_id"], TaskStatus(row["status"]), TaskProgress.model_validate_json(row["progress_json"]), row["created_at"], row["updated_at"], row["error"], row["target_base_url"], row["target_api_key_enc"], row["judge_base_url"], row["judge_api_key_enc"], row["max_samples"])
+        return EvaluationTask(row["task_id"], row["name"], row["target_model_id"], row["judge_model_id"], row["dataset_version_id"], row["rubric_id"], TaskStatus(row["status"]), TaskProgress.model_validate_json(row["progress_json"]), row["created_at"], row["updated_at"], row["error"], row["target_base_url"], row["target_api_key_env"], row["target_api_key_enc"], row["judge_base_url"], row["judge_api_key_env"], row["judge_api_key_enc"], row["max_samples"])
 
     def next_queued(self) -> EvaluationTask | None:
         with connect(self.database_path) as db:

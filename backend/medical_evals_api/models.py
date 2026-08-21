@@ -22,7 +22,9 @@ class EvaluationTask:
     updated_at: str
     error: str | None = None
     target_base_url: str = ""
+    target_api_key_env: str = ""
     target_api_key_enc: str = ""
     judge_base_url: str = ""
+    judge_api_key_env: str = ""
     judge_api_key_enc: str = ""
     max_samples: int | None = None

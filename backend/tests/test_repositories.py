@@ -37,3 +37,22 @@ def test_terminal_status_does_not_overwrite_cancellation(tmp_path):
 
     assert result.status == TaskStatus.CANCELLED
     assert repo.get(task.task_id).status == TaskStatus.CANCELLED
+
+
+def test_task_repository_persists_credential_environment_names(tmp_path):
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(
+        name="env credentials",
+        target_model_id="model",
+        judge_model_id="judge",
+        dataset_version_id="dataset",
+        rubric_id="rubric",
+        target_api_key_env="TARGET_KEY",
+        judge_api_key_env="JUDGE_KEY",
+    )
+
+    loaded = repo.get(task.task_id)
+
+    assert loaded is not None
+    assert loaded.target_api_key_env == "TARGET_KEY"
+    assert loaded.judge_api_key_env == "JUDGE_KEY"

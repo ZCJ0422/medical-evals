@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+import os
 import time
 from typing import cast
 
@@ -31,6 +32,13 @@ from .evaluation_sources import healthbench_samples_path
 
 
 SAMPLE_MAX_RETRIES = 2
+
+
+def _resolve_task_secret(encrypted_value: str, environment_name: str) -> str:
+    """Prefer the encrypted task secret, with an optional env-name fallback."""
+    if encrypted_value:
+        return decrypt_secret(encrypted_value)
+    return os.getenv(environment_name, "") if environment_name else ""
 
 
 class _WorkbenchModelClient:
@@ -176,7 +184,7 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
         )
         target: ModelClient = cast(ModelClient, self.target_client or OpenAICompatibleClient(
             task.target_base_url,
-            decrypt_secret(task.target_api_key_enc),
+            _resolve_task_secret(task.target_api_key_enc, task.target_api_key_env),
             max_retries=2,
             retry_base_seconds=1.0,
         ))
@@ -254,8 +262,8 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
         samples = load_healthbench_samples(path)
         if task.max_samples:
             samples = samples[:task.max_samples]
-        target = self.target_client or OpenAICompatibleClient(task.target_base_url, decrypt_secret(task.target_api_key_enc))
-        judge = self.judge_client or OpenAICompatibleClient(task.judge_base_url, decrypt_secret(task.judge_api_key_enc))
+        target = self.target_client or OpenAICompatibleClient(task.target_base_url, _resolve_task_secret(task.target_api_key_enc, task.target_api_key_env))
+        judge = self.judge_client or OpenAICompatibleClient(task.judge_base_url, _resolve_task_secret(task.judge_api_key_enc, task.judge_api_key_env))
         target_core = _WorkbenchModelClient(target)
         judge_core = _WorkbenchModelClient(judge)
         checkpoint = getattr(self, "checkpoint", {})
