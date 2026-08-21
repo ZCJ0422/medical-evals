@@ -9,6 +9,11 @@ description = "Medical LLM Evaluation Framework based on OpenAI Evals"
 requires-python = ">=3.10"
 readme = "README.md"
 dependencies = [
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+full = [
     "evals @ git+https://github.com/openai/evals.git@8eac7a7de5215c907fbddc30efdaf316913eccdd",
     "aiolimiter",
     "anthropic",
@@ -36,7 +41,6 @@ dependencies = [
     "nltk",
     "numexpr",
     "numpy",
-    "openai>=1.0.0",
     "pandas",
     "playwright",
     "pydantic",
@@ -54,8 +58,6 @@ dependencies = [
     "types-tqdm",
     "zstandard",
 ]
-
-[project.optional-dependencies]
 formatters = ["black", "isort", "autoflake", "ruff"]
 
 torch = ["torch"]

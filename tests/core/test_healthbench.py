@@ -22,6 +22,11 @@ class FakeClient:
         return ModelResponse(text=next(self.responses), model=request.model)
 
 
+class FailingJudge:
+    def complete(self, request: CompletionRequest, on_event=None):
+        raise RuntimeError("judge transport failed")
+
+
 def test_healthbench_core_keeps_rubrics_out_of_target_and_aggregates_tags():
     target = FakeClient(["Seek care if symptoms worsen."])
     judge = FakeClient([
@@ -51,3 +56,15 @@ def test_healthbench_core_retries_invalid_judge_json_once_then_fails_safely():
     assert result.error.category == "judge_parse_error"
     assert result.error.message == "judge failed: judge_parse_error"
     assert len(judge.requests) == 2
+
+
+def test_healthbench_core_marks_judge_transport_errors_as_judge_stage():
+    target = FakeClient(["answer"])
+
+    result = evaluate_healthbench_sample(
+        target, FailingJudge(), SAMPLE, target_model="target", judge_model="judge"
+    )
+
+    assert result.error is not None
+    assert result.error.stage == "judge"
+    assert result.error.category == "request_error"

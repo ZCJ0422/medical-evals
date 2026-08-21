@@ -84,17 +84,17 @@ Install the backend dependencies once, then initialize the local API database
 and start the API with:
 
 ```bash
-uv sync --extra test
 cd backend
-PYTHONPATH=.:.. uv run python -m medical_evals_api.cli init-db
-PYTHONPATH=.:.. uv run python -m medical_evals_api.cli api
+uv sync --extra test
+uv run python -m medical_evals_api.cli init-db
+uv run python -m medical_evals_api.cli api
 ```
 
 In a separate terminal, start the worker:
 
 ```bash
 cd backend
-PYTHONPATH=.:.. uv run python -m medical_evals_api.cli worker
+uv run python -m medical_evals_api.cli worker
 ```
 
 The frontend is a separate Next.js application:
@@ -113,7 +113,7 @@ names, never the API key values:
 export MEDICAL_EVALS_TARGET_API_KEY="sk-target..."
 export MEDICAL_EVALS_JUDGE_API_KEY="sk-judge..."
 cd backend
-PYTHONPATH=.:.. uv run python -m medical_evals_api.cli worker
+uv run python -m medical_evals_api.cli worker
 ```
 
 For local configuration, copy `backend/.env.example` to `backend/.env` and
@@ -133,7 +133,7 @@ route is intentionally separate from the public result summary route.
 The project uses `uv` for environment and lockfile management:
 
 ```bash
-uv sync
+uv sync --extra full
 uv run pytest
 ```
 

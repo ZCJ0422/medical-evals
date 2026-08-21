@@ -159,10 +159,12 @@ def evaluate_healthbench_sample(
                     total_retries += judge_response.retry_count
                     judge_error = None
                     break
-                except ValueError as error:
+                except Exception as error:
                     judge_error = error
-                    if on_event:
+                    if isinstance(error, ValueError) and on_event:
                         on_event(EvaluationEvent("parse_failed", "judge", attempt=attempt + 1, category="judge_parse_error"))
+                    if not isinstance(error, ValueError):
+                        raise
             if judge_error is not None:
                 raise judge_error
             judgments.append({

@@ -24,7 +24,7 @@ class Worker:
         task = self.repository.get(task_id)
         if task is None:
             raise KeyError(task_id)
-        if task.status != TaskStatus.QUEUED:
+        if task.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
             return task
         artifacts = ArtifactWriter(artifact_root_for_database(self.repository.database_path), task_id)
         artifacts.log("Run started")

@@ -80,7 +80,7 @@ medical-evals/
 ```bash
 git clone --depth 1 https://github.com/ZCJ0422/medical-evals.git
 cd medical-evals
-uv sync
+uv sync --extra full
 uv run pytest -q tests
 ```
 

@@ -3130,6 +3130,17 @@ name = "medical-evals"
 version = "3.0.1.post1"
 source = { editable = "." }
 dependencies = [
+    { name = "openai" },
+]
+
+[package.optional-dependencies]
+formatters = [
+    { name = "autoflake" },
+    { name = "black" },
+    { name = "isort" },
+    { name = "ruff" },
+]
+full = [
     { name = "aiolimiter" },
     { name = "anthropic" },
     { name = "backoff" },
@@ -3162,7 +3173,6 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "openai" },
     { name = "pandas" },
     { name = "playwright" },
     { name = "pydantic" },
@@ -3180,71 +3190,63 @@ dependencies = [
     { name = "types-tqdm" },
     { name = "zstandard" },
 ]
-
-[package.optional-dependencies]
-formatters = [
-    { name = "autoflake" },
-    { name = "black" },
-    { name = "isort" },
-    { name = "ruff" },
-]
 torch = [
     { name = "torch" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "aiolimiter" },
-    { name = "anthropic" },
+    { name = "aiolimiter", marker = "extra == 'full'" },
+    { name = "anthropic", marker = "extra == 'full'" },
     { name = "autoflake", marker = "extra == 'formatters'" },
-    { name = "backoff" },
-    { name = "beartype", specifier = ">=0.12.0" },
+    { name = "backoff", marker = "extra == 'full'" },
+    { name = "beartype", marker = "extra == 'full'", specifier = ">=0.12.0" },
     { name = "black", marker = "extra == 'formatters'" },
-    { name = "blobfile" },
-    { name = "chess" },
-    { name = "dacite" },
-    { name = "datasets" },
-    { name = "docker" },
-    { name = "evals", git = "https://github.com/openai/evals.git?rev=8eac7a7de5215c907fbddc30efdaf316913eccdd" },
-    { name = "evaluate" },
-    { name = "filelock" },
-    { name = "fire" },
-    { name = "flask" },
-    { name = "google-generativeai" },
-    { name = "gymnasium" },
+    { name = "blobfile", marker = "extra == 'full'" },
+    { name = "chess", marker = "extra == 'full'" },
+    { name = "dacite", marker = "extra == 'full'" },
+    { name = "datasets", marker = "extra == 'full'" },
+    { name = "docker", marker = "extra == 'full'" },
+    { name = "evals", marker = "extra == 'full'", git = "https://github.com/openai/evals.git?rev=8eac7a7de5215c907fbddc30efdaf316913eccdd" },
+    { name = "evaluate", marker = "extra == 'full'" },
+    { name = "filelock", marker = "extra == 'full'" },
+    { name = "fire", marker = "extra == 'full'" },
+    { name = "flask", marker = "extra == 'full'" },
+    { name = "google-generativeai", marker = "extra == 'full'" },
+    { name = "gymnasium", marker = "extra == 'full'" },
     { name = "isort", marker = "extra == 'formatters'" },
-    { name = "jiwer" },
-    { name = "langchain" },
-    { name = "langdetect" },
-    { name = "lz4" },
-    { name = "matplotlib" },
-    { name = "mock" },
-    { name = "mypy" },
-    { name = "networkx" },
-    { name = "nltk" },
-    { name = "numexpr" },
-    { name = "numpy" },
+    { name = "jiwer", marker = "extra == 'full'" },
+    { name = "langchain", marker = "extra == 'full'" },
+    { name = "langdetect", marker = "extra == 'full'" },
+    { name = "lz4", marker = "extra == 'full'" },
+    { name = "matplotlib", marker = "extra == 'full'" },
+    { name = "mock", marker = "extra == 'full'" },
+    { name = "mypy", marker = "extra == 'full'" },
+    { name = "networkx", marker = "extra == 'full'" },
+    { name = "nltk", marker = "extra == 'full'" },
+    { name = "numexpr", marker = "extra == 'full'" },
+    { name = "numpy", marker = "extra == 'full'" },
     { name = "openai", specifier = ">=1.0.0" },
-    { name = "pandas" },
-    { name = "playwright" },
-    { name = "pydantic" },
-    { name = "pytest" },
-    { name = "pyyaml" },
+    { name = "pandas", marker = "extra == 'full'" },
+    { name = "playwright", marker = "extra == 'full'" },
+    { name = "pydantic", marker = "extra == 'full'" },
+    { name = "pytest", marker = "extra == 'full'" },
+    { name = "pyyaml", marker = "extra == 'full'" },
     { name = "ruff", marker = "extra == 'formatters'" },
-    { name = "sacrebleu" },
-    { name = "seaborn" },
-    { name = "snowflake-connector-python", extras = ["pandas"] },
-    { name = "spacy-universal-sentence-encoder" },
-    { name = "statsmodels" },
-    { name = "termcolor" },
-    { name = "tiktoken" },
+    { name = "sacrebleu", marker = "extra == 'full'" },
+    { name = "seaborn", marker = "extra == 'full'" },
+    { name = "snowflake-connector-python", extras = ["pandas"], marker = "extra == 'full'" },
+    { name = "spacy-universal-sentence-encoder", marker = "extra == 'full'" },
+    { name = "statsmodels", marker = "extra == 'full'" },
+    { name = "termcolor", marker = "extra == 'full'" },
+    { name = "tiktoken", marker = "extra == 'full'" },
     { name = "torch", marker = "extra == 'torch'" },
-    { name = "tqdm" },
-    { name = "types-pyyaml" },
-    { name = "types-tqdm" },
-    { name = "zstandard" },
+    { name = "tqdm", marker = "extra == 'full'" },
+    { name = "types-pyyaml", marker = "extra == 'full'" },
+    { name = "types-tqdm", marker = "extra == 'full'" },
+    { name = "zstandard", marker = "extra == 'full'" },
 ]
-provides-extras = ["formatters", "torch"]
+provides-extras = ["full", "formatters", "torch"]
 
 [[package]]
 name = "ml-dtypes"

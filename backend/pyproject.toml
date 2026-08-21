@@ -13,6 +13,7 @@ dependencies = [
     "uvicorn[standard]>=0.30,<1",
     "cryptography>=43,<46",
     "openai>=1.0.0",
+    "medical-evals",
 ]
 
 [project.optional-dependencies]
@@ -23,3 +24,6 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["medical_evals_api*"]
+
+[tool.uv.sources]
+medical-evals = { path = "..", editable = true }

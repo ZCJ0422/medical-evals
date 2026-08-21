@@ -121,7 +121,7 @@ parse_success_rate = 成功解析出选项的题数 / 请求成功的题数
 ```bash
 git clone --depth 1 https://github.com/ZCJ0422/medical-evals.git
 cd medical-evals
-uv sync
+uv sync --extra full
 ```
 
 配置模型服务：

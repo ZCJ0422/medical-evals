@@ -12,3 +12,17 @@ def test_task_repository_persists_queue_and_progress(tmp_path):
     assert loaded is not None
     assert loaded.progress.completed_count == 1
     assert loaded.status == TaskStatus.RUNNING
+
+
+def test_task_repository_claim_next_atomically_marks_task_running(tmp_path):
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    first = repo.create(name="first", target_model_id="model", judge_model_id="", dataset_version_id="dataset", rubric_id="rubric")
+    second = repo.create(name="second", target_model_id="model", judge_model_id="", dataset_version_id="dataset", rubric_id="rubric")
+
+    claimed = repo.claim_next()
+
+    assert claimed is not None
+    assert claimed.task_id == first.task_id
+    assert claimed.status == TaskStatus.RUNNING
+    assert repo.claim_next().task_id == second.task_id
+    assert repo.claim_next() is None

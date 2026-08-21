@@ -14,5 +14,5 @@ class LocalTaskQueue:
             raise ValueError("only queued tasks can be enqueued")
 
     def claim_next(self) -> str | None:
-        task = self.repository.next_queued()
+        task = self.repository.claim_next()
         return task.task_id if task else None

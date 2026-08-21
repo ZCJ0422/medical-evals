@@ -35,6 +35,25 @@ class TaskRepository:
             row = db.execute("SELECT task_id FROM tasks WHERE status = 'queued' ORDER BY created_at LIMIT 1").fetchone()
         return self.get(row["task_id"]) if row else None
 
+    def claim_next(self) -> EvaluationTask | None:
+        """Atomically move one queued task to running and return it."""
+        with connect(self.database_path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT task_id FROM tasks WHERE status = 'queued' ORDER BY created_at LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            now = utc_now()
+            updated = db.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ? AND status = ?",
+                (TaskStatus.RUNNING.value, now, row["task_id"], TaskStatus.QUEUED.value),
+            )
+            if updated.rowcount != 1:
+                return None
+            claimed_id = row["task_id"]
+        return self.get(claimed_id)
+
     def list(self) -> list[EvaluationTask]:
         with connect(self.database_path) as db:
             rows = db.execute("SELECT task_id FROM tasks ORDER BY created_at DESC").fetchall()

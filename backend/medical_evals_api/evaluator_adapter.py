@@ -19,7 +19,6 @@ from medical_evals.core.healthbench import (
 from medical_evals.core.models import CompletionRequest, EvaluationEvent, HealthBenchSampleResult, MedQASampleResult, ModelResponse
 from medical_evals.datasets.medqa import load_medqa_samples
 from medical_evals.datasets.healthbench import load_healthbench_samples
-from medical_evals.judges.rubric import build_rubric_judge_prompt, parse_rubric_judgment
 
 
 SAMPLE_MAX_RETRIES = 2
@@ -121,19 +120,17 @@ def deserialize_medqa_record(record: dict) -> MedQASampleResult:
 
 
 def healthbench_metrics(records: list[dict]) -> dict[str, object]:
-    """Aggregate completed HealthBench samples using their rubric scores."""
-    scored = [record for record in records if "score" in record]
-    score = min(1.0, max(0.0, sum(float(record["score"]) for record in scored) / len(scored))) if scored else 0.0
-    tags = sorted({tag for record in scored for tag in record.get("tag_scores", {})})
-    tag_scores = {
-        tag: min(1.0, max(0.0, sum(float(record["tag_scores"][tag]) for record in scored if tag in record.get("tag_scores", {})) / len([record for record in scored if tag in record.get("tag_scores", {})]))) if any(tag in record.get("tag_scores", {}) for record in scored) else 0.0
-        for tag in tags
-    }
+    """Compatibility view over the shared HealthBench aggregation core."""
+    summary = aggregate_healthbench([_deserialize_healthbench_record(record) for record in records])
     return {
-        "score": score,
-        "tag_scores": tag_scores,
-        "completed": len(scored),
-        "failed": sum(1 for record in records if record.get("error")),
+        "score": summary.total_score,
+        "tag_scores": {
+            key.removeprefix("tag:"): value
+            for key, value in summary.dimensions.items()
+            if key.startswith("tag:")
+        },
+        "completed": summary.success_count,
+        "failed": summary.failed_count,
     }
 def healthbench_samples_path(dataset_version_id: str):
     """Resolve a HealthBench version to the data file it actually represents."""

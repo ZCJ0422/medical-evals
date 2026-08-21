@@ -14,5 +14,5 @@ export default function globalSetup() {
     "running = repo.create(name='E2E running result fixture', target_model_id='fixture-model', judge_model_id='', dataset_version_id='medical-medqa.dev.v1', rubric_id='medical-medqa.default', max_samples=2)",
     "repo.set_status(running.task_id, __import__('medical_evals_api.schemas.common', fromlist=['TaskStatus']).TaskStatus.RUNNING)",
   ].join("; ");
-  execFileSync("uv", ["run", "python", "-c", code], { cwd: backendDir, env: { ...process.env, PYTHONPATH: ".:..", UV_CACHE_DIR: "/tmp/medical-evals-uv-cache" }, stdio: "inherit" });
+  execFileSync("uv", ["run", "python", "-c", code], { cwd: backendDir, env: { ...process.env }, stdio: "inherit" });
 }

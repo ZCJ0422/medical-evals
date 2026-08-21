@@ -1,4 +1,5 @@
 from medical_evals_api.repositories.tasks import TaskRepository
+from medical_evals_api.queue import LocalTaskQueue
 from medical_evals_api.schemas.common import TaskStatus
 from medical_evals_api.evaluator_adapter import DryRunEvaluationAdapter, OpenAICompatibleEvaluationAdapter
 from medical_evals_api.worker import Worker
@@ -33,6 +34,17 @@ def test_worker_completes_dry_run(tmp_path):
     result = Worker(repo, adapter=DryRunEvaluationAdapter()).run_task(task.task_id)
     assert result.status == TaskStatus.COMPLETED
     assert result.progress.progress_percent == 100
+
+
+def test_worker_runs_a_task_claimed_by_local_queue(tmp_path):
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(name="claimed", target_model_id="model", judge_model_id="judge", dataset_version_id="dataset-v1", rubric_id="rubric-v1")
+    claimed_id = LocalTaskQueue(repo).claim_next()
+
+    assert claimed_id == task.task_id
+    result = Worker(repo, adapter=DryRunEvaluationAdapter()).run_task(claimed_id)
+
+    assert result.status == TaskStatus.COMPLETED
 
 
 def test_worker_marks_unhandled_adapter_error_as_failed(tmp_path):
