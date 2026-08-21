@@ -16,10 +16,7 @@ from .catalog import DATASETS
 router = APIRouter(prefix="/api/evaluations", tags=["evaluations"])
 
 _RETRY_SUFFIX = re.compile(r"\s-\sretry(\d*)$", re.IGNORECASE)
-_DATASET_RUBRICS = {
-    "medical-medqa": "medical-medqa.default",
-    "medical-healthbench": "healthbench-default",
-}
+_DATASET_RUBRICS = {item.dataset_id: item.rubric_id for item in DATASETS}
 
 
 def _retry_name(repo: TaskRepository, name: str) -> str:

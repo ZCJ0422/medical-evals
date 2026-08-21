@@ -12,4 +12,5 @@ def test_catalog_lists_medqa_and_healthbench_without_raw_content():
     payload = response.json()
     ids = {item["dataset_id"] for item in payload}
     assert {"medical-medqa", "medical-healthbench"}.issubset(ids)
+    assert {item["rubric_id"] for item in payload} == {"medical-medqa.default", "healthbench-default"}
     assert all("prompt" not in item and "rubrics" not in item for item in payload)

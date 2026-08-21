@@ -16,6 +16,7 @@ export type TaskSummary = {
 export type DatasetVersion = {
   dataset_version_id: string;
   dataset_id: string;
+  rubric_id: string;
   name: string;
   version: string;
   sample_count: number;

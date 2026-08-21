@@ -51,6 +51,7 @@ class ModelSummary(BaseModel):
 class DatasetVersionSummary(BaseModel):
     dataset_version_id: str
     dataset_id: str
+    rubric_id: str
     name: str
     version: str
     sample_count: int

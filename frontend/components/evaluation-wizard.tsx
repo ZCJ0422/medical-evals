@@ -38,7 +38,7 @@ export function EvaluationWizard({ datasets }: { datasets: DatasetVersion[] }) {
     const errors = [...validate(0), ...validate(1)];
     if (errors.length) { setError(errors.join(" ")); setStep(errors.some((item) => item === t("datasetRequired")) ? 0 : 1); return; }
     setBusy(true); setError(""); setMessage("");
-    const rubric_id = needsJudge ? "healthbench-default" : "medical-medqa.default";
+    const rubric_id = selectedDataset?.rubric_id ?? "";
     const payload = { name: draft.name, target_model_id: draft.target_model_id, judge_model_id: needsJudge ? draft.judge_model_id : "", dataset_version_id: draft.dataset_version_id, rubric_id, target_base_url: draft.target_base_url, target_api_key: draft.target_api_key, judge_base_url: needsJudge ? draft.judge_base_url : "", judge_api_key: needsJudge ? draft.judge_api_key : "", max_samples: draft.max_samples ? Number(draft.max_samples) : null };
     try {
       const check = await api<{ ready: boolean; errors: string[] }>("/api/evaluations/preflight", { method: "POST", body: JSON.stringify(payload) });
