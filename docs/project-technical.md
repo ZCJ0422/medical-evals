@@ -201,6 +201,11 @@ Workbench 逐题 Artifact 使用统一字段 `raw_output` 和 `rubric_judgments`
 preflight 只接受 catalog 中登记的数据集和对应 rubric；前端直接使用该字段，避免
 新增数据集时前后端各自维护一套 rubric 映射。
 
+任务凭据支持两种互斥的运行来源：API 请求中的明文 key 会在落库前加密，或通过
+`target_api_key_env` / `judge_api_key_env` 指定显式环境变量名，由 Worker 启动环境提供
+实际值。环境变量名会校验为合法 shell 名称；若两种来源同时存在，加密 key 优先。
+环境变量的实际值不写入数据库、任务响应、Artifact、报告或日志。
+
 第一版按单机内网部署，不支持公开注册、团队角色、用户上传数据集、自定义 Rubric、
 多任务对比、审计日志或自动清理。
 

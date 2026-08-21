@@ -122,6 +122,14 @@ export OPENAI_MODEL="your-model"
 uv run oaieval ...
 ```
 
+For API-created headless Workbench tasks, `target_api_key_env` and
+`judge_api_key_env` may be used instead of sending key material. Each field
+must contain an explicit shell environment-variable name (for example,
+`MEDICAL_EVALS_TARGET_API_KEY`), and that variable must be present in the
+Worker process environment. An encrypted key takes precedence when both forms
+are supplied. Environment-variable names are stored as task metadata; their
+values are never persisted or returned by the API.
+
 For local configuration, copy `backend/.env.example` to `backend/.env` and
 keep the copy out of Git. Production mode refuses the development token and
 encryption secrets, and requires a configured administrator password hash.
