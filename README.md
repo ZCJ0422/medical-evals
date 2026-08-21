@@ -78,7 +78,9 @@ Detailed technical documentation:
 The first workbench vertical slice lives under `backend/` and `frontend/`. It is
 designed for one fixed administrator account and a single-machine internal
 deployment. The API and worker boundaries are separate from the existing
-evaluation code so the evaluator can later move to a multi-worker deployment.
+evaluation code, and the SQLite queue supports lease-based coordination
+between multiple local Worker processes. Multi-machine deployment still
+requires an external queue and database.
 
 Install the backend dependencies once, then initialize the local API database
 and start the API with:
