@@ -20,7 +20,7 @@ def test_create_evaluation_requires_admin():
 def test_create_evaluation_returns_queued_task(tmp_path, monkeypatch):
     from medical_evals_api import config
     monkeypatch.setattr(config.settings, "database_path", tmp_path / "tasks.sqlite3")
-    response = client.post("/api/evaluations", headers=admin_headers(), json={"name": "smoke", "target_model_id": "model", "judge_model_id": "judge", "dataset_version_id": "dataset-v1", "rubric_id": "rubric-v1", "target_base_url": "https://target.example/v1", "judge_base_url": "https://judge.example/v1", "target_api_key": "target-secret", "judge_api_key": "judge-secret"})
+    response = client.post("/api/evaluations", headers=admin_headers(), json={"name": "smoke", "target_model_id": "model", "judge_model_id": "judge", "dataset_version_id": "medical-medqa.dev.v1", "rubric_id": "medical-medqa.default", "target_base_url": "https://target.example/v1", "judge_base_url": "https://judge.example/v1", "target_api_key": "target-secret", "judge_api_key": "judge-secret"})
     assert response.status_code == 201
     assert response.json()["status"] == "queued"
 
@@ -164,3 +164,33 @@ def test_preflight_rejects_api_key_entered_as_base_url(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["ready"] is False
     assert any("Base URL" in error for error in response.json()["errors"])
+
+
+def test_preflight_rejects_unknown_dataset_and_mismatched_rubric(tmp_path, monkeypatch):
+    from medical_evals_api import config
+    monkeypatch.setattr(config.settings, "database_path", tmp_path / "tasks.sqlite3")
+    response = client.post("/api/evaluations/preflight", headers=admin_headers(), json={
+        "name": "bad-catalog-entry",
+        "target_model_id": "model",
+        "dataset_version_id": "medical-healthbench.unknown.v1",
+        "rubric_id": "medical-healthbench.unknown",
+        "target_base_url": "https://api.example.com/v1",
+        "target_api_key": "target-secret",
+    })
+    assert response.status_code == 200
+    assert response.json()["ready"] is False
+    assert "Unsupported dataset version" in response.json()["errors"]
+
+    mismatched = client.post("/api/evaluations/preflight", headers=admin_headers(), json={
+        "name": "bad-rubric",
+        "target_model_id": "model",
+        "dataset_version_id": "medical-healthbench.smoke.v1",
+        "rubric_id": "medical-medqa.default",
+        "target_base_url": "https://api.example.com/v1",
+        "target_api_key": "target-secret",
+        "judge_model_id": "judge",
+        "judge_base_url": "https://judge.example.com/v1",
+        "judge_api_key": "judge-secret",
+    })
+    assert mismatched.status_code == 200
+    assert any("Rubric must be healthbench-default" in error for error in mismatched.json()["errors"])

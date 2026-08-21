@@ -16,6 +16,10 @@ from .catalog import DATASETS
 router = APIRouter(prefix="/api/evaluations", tags=["evaluations"])
 
 _RETRY_SUFFIX = re.compile(r"\s-\sretry(\d*)$", re.IGNORECASE)
+_DATASET_RUBRICS = {
+    "medical-medqa": "medical-medqa.default",
+    "medical-healthbench": "healthbench-default",
+}
 
 
 def _retry_name(repo: TaskRepository, name: str) -> str:
@@ -50,6 +54,15 @@ def _summary(task) -> TaskSummary:
 @router.post("/preflight", response_model=PreflightResponse)
 def preflight(payload: EvaluationCreate, _: AdminIdentity = Depends(require_admin)) -> PreflightResponse:
     errors = []
+    dataset = next((item for item in DATASETS if item.dataset_version_id == payload.dataset_version_id), None)
+    if dataset is None:
+        errors.append("Unsupported dataset version")
+    else:
+        expected_rubric = _DATASET_RUBRICS.get(dataset.dataset_id)
+        if expected_rubric is None:
+            errors.append("Unsupported dataset family")
+        elif payload.rubric_id != expected_rubric:
+            errors.append(f"Rubric must be {expected_rubric} for this dataset")
     if not payload.target_api_key.strip():
         errors.append("Target API Key is required")
     target_url = urlparse(payload.target_base_url.strip())

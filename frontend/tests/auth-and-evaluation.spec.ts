@@ -33,6 +33,11 @@ test("sidebar controls match navigation styling and remain readable on hover", a
 });
 
 test("administrator can create an evaluation", async ({ page }) => {
+  const payloads: Array<Record<string, unknown>> = [];
+  await page.route("**/api/evaluations", async (route) => {
+    if (route.request().method() === "POST") payloads.push(route.request().postDataJSON() as Record<string, unknown>);
+    await route.continue();
+  });
   await page.goto("/login");
   await page.getByLabel("Username").fill("admin");
   await page.getByLabel("Password").fill("medical-evals-admin");
@@ -49,6 +54,8 @@ test("administrator can create an evaluation", async ({ page }) => {
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.getByRole("button", { name: "Create evaluation", exact: true }).click();
   await expect(page.getByText(/^Evaluation queued:/)).toBeVisible();
+  expect(payloads).toHaveLength(1);
+  expect(payloads[0].rubric_id).toBe("medical-medqa.default");
 });
 
 test("created evaluation appears with its queued status", async ({ page }) => {
