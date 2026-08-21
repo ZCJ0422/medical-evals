@@ -1,11 +1,20 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import settings
+from .config import settings, validate_runtime_security
 from .routes import auth, catalog, evaluations, me, reports, results
 
 
-app = FastAPI(title="Medical Evals API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    validate_runtime_security(settings)
+    yield
+
+
+app = FastAPI(title="Medical Evals API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin, "http://127.0.0.1:3000"],
