@@ -10,6 +10,7 @@ import evals
 from evals.record import record_match
 
 from medical_evals.datasets.healthbench import load_healthbench_samples
+from medical_evals.core.models import HealthBenchSampleResult
 from medical_evals.core.healthbench import (
     aggregate_healthbench,
     build_healthbench_prompt,
@@ -51,7 +52,7 @@ class HealthBenchEval(evals.Eval):
         self.judge_completion_fn = resolved_judge
         self.model_client = CompletionFnModelClient(self.completion_fn)
         self.judge_client = CompletionFnModelClient(resolved_judge, model=judge_model)
-        self._sample_results = []
+        self._sample_results: list[HealthBenchSampleResult] = []
 
     @staticmethod
     def _completion_model(completion_fn) -> str | None:

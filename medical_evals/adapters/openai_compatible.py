@@ -6,7 +6,7 @@ import os
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 from evals.api import CompletionFn, CompletionResult
 from evals.prompt.base import OpenAICreateChatPrompt, Prompt
@@ -45,7 +45,7 @@ def _safe_error_category(error: Exception) -> str:
 def _safe_status_code(error: Exception) -> int | None:
     status_code = getattr(getattr(error, "response", None), "status_code", None)
     try:
-        return int(status_code)
+        return int(cast(Any, status_code))
     except (TypeError, ValueError):
         return None
 
@@ -102,7 +102,7 @@ def _usage_mapping(usage: Any) -> dict[str, Any] | None:
     elif hasattr(usage, "to_dict"):
         value = usage.to_dict()
     elif is_dataclass(usage):
-        value = asdict(usage)
+        value = asdict(cast(Any, usage))
     elif isinstance(usage, Mapping):
         value = dict(usage)
     elif hasattr(usage, "__dict__"):
@@ -186,7 +186,7 @@ class OpenAICompatibleCompletionFn(CompletionFn):
             api_key=self.api_key,
             base_url=self.base_url,
             model=self.model,
-            timeout=timeout,
+            timeout=timeout if timeout is not None else 60.0,
             max_retries=max_retries,
             retry_base_seconds=retry_base_seconds,
             sleep_fn=sleep_fn,
@@ -244,7 +244,7 @@ class OpenAICompatibleCompletionFn(CompletionFn):
         }
         request = CompletionRequest(
             prompt=messages,
-            model=self.model,
+            model=self.model or "",
             temperature=kwargs.get("temperature"),
             max_tokens=kwargs.get("max_tokens"),
             options=request_options,

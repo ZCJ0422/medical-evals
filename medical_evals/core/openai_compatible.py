@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import Any, cast
 
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 
@@ -62,7 +62,7 @@ def _usage_mapping(usage: Any) -> dict[str, Any] | None:
     elif hasattr(usage, "to_dict"):
         value = usage.to_dict()
     elif is_dataclass(usage):
-        value = asdict(usage)
+        value = asdict(cast(Any, usage))
     elif isinstance(usage, Mapping):
         value = dict(usage)
     elif hasattr(usage, "__dict__"):
@@ -154,7 +154,7 @@ class OpenAICompatibleClient:
         request: CompletionRequest,
         on_event: EventCallback | None = None,
     ) -> ModelResponse:
-        request_kwargs = {
+        request_kwargs: dict[str, Any] = {
             "model": request.model,
             "messages": _messages(request.prompt),
         }

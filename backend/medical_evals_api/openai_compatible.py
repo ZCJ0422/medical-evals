@@ -112,7 +112,7 @@ class OpenAICompatibleClient(CoreOpenAICompatibleClient):
         self.last_retry_count = response.retry_count
         return response
 
-    def complete(
+    def complete(  # type: ignore[override]
         self,
         prompt: CompletionRequest | str | list[dict[str, Any]],
         *,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 from .models import (
     CompletionRequest,
@@ -88,15 +88,15 @@ def make_safe_healthbench_error(
     """Create a safe persisted HealthBench error with target/judge context."""
     safe_stage = stage if isinstance(stage, str) and stage in {"target", "judge"} else "target"
     try:
-        safe_retry_count = max(0, int(retry_count))
+        safe_retry_count = max(0, int(cast(Any, retry_count)))
     except (TypeError, ValueError):
         safe_retry_count = 0
     try:
-        safe_attempt = max(1, int(attempt)) if attempt is not None else safe_retry_count + 1
+        safe_attempt = max(1, int(cast(Any, attempt))) if attempt is not None else safe_retry_count + 1
     except (TypeError, ValueError):
         safe_attempt = safe_retry_count + 1
     try:
-        safe_status_code = int(status_code) if status_code is not None else None
+        safe_status_code = int(cast(Any, status_code)) if status_code is not None else None
     except (TypeError, ValueError):
         safe_status_code = None
     if safe_status_code is not None and not 100 <= safe_status_code <= 599:
@@ -255,7 +255,7 @@ def evaluate_healthbench_sample(
 
 def aggregate_healthbench(results: Sequence[HealthBenchSampleResult]) -> EvaluationSummary:
     successful = [result for result in results if result.error is None and result.score is not None]
-    overall = sum(float(result.score) for result in successful) / len(successful) if successful else 0.0
+    overall = sum(cast(float, result.score) for result in successful) / len(successful) if successful else 0.0
     tags = sorted({tag for result in successful for tag in result.tag_scores})
     dimensions = {"rubric_score": overall}
     for tag in tags:

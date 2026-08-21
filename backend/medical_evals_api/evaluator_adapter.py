@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 import time
+from typing import cast
 
 from .models import EvaluationTask
 from .schemas.common import TaskProgress
@@ -16,6 +17,7 @@ from medical_evals.core.healthbench import (
     evaluate_healthbench_sample,
 )
 from medical_evals.core.models import CompletionRequest, EvaluationEvent, HealthBenchSampleResult, ModelResponse
+from medical_evals.core.protocols import ModelClient
 from medical_evals.datasets.medqa import load_medqa_samples
 from medical_evals.datasets.healthbench import load_healthbench_samples
 from .evaluation_records import (
@@ -50,7 +52,7 @@ class _WorkbenchModelClient:
                 )
             except Exception as error:
                 if not hasattr(error, "retryable"):
-                    error.retryable = True
+                    setattr(error, "retryable", True)
                 raise
         if isinstance(response, ModelResponse):
             return response
@@ -172,12 +174,12 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
                 retry_count=initial_summary.retry_count,
             )
         )
-        target = self.target_client or OpenAICompatibleClient(
+        target: ModelClient = cast(ModelClient, self.target_client or OpenAICompatibleClient(
             task.target_base_url,
             decrypt_secret(task.target_api_key_enc),
             max_retries=2,
             retry_base_seconds=1.0,
-        )
+        ))
         success = initial_summary.success_count
         failed = initial_summary.failed_count
         total_retries = initial_summary.retry_count
@@ -189,17 +191,20 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
             if sample_index in checkpoint_records:
                 continue
             self._log(f"[sample {index}/{len(samples)}] started")
+            def on_event(event: EvaluationEvent, sample_number: int = index) -> None:
+                self._core_event(
+                    event,
+                    sample_number=sample_number,
+                    total_samples=len(samples),
+                )
+
             result = evaluate_medqa_sample(
                 target,
                 sample,
                 model=task.target_model_id,
                 temperature=0.1,
                 max_tokens=5120,
-                on_event=lambda event, sample_number=index: self._core_event(
-                    event,
-                    sample_number=sample_number,
-                    total_samples=len(samples),
-                ),
+                on_event=on_event,
             )
             if result.error is None:
                 self._stage("parsing")

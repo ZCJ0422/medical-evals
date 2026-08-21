@@ -86,8 +86,12 @@ class Worker:
             self.adapter.on_sample = record_sample
         self.repository.set_status(task_id, TaskStatus.RUNNING)
         update_stage("preparing")
+        def is_task_cancelled() -> bool:
+            current_task = self.repository.get(task_id)
+            return current_task is not None and current_task.status == TaskStatus.CANCELLED
+
         try:
-            result = self.adapter.run(task, update_progress, lambda: self.repository.get(task_id).status == TaskStatus.CANCELLED)
+            result = self.adapter.run(task, update_progress, is_task_cancelled)
         except Exception as error:
             artifacts.log(f"task failed: {_safe_error(error)}")
             update_stage("failed")

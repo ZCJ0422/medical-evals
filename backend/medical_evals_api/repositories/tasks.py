@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import uuid
 from dataclasses import replace
@@ -58,7 +59,7 @@ class TaskRepository:
     def list(self) -> list[EvaluationTask]:
         with connect(self.database_path) as db:
             rows = db.execute("SELECT task_id FROM tasks ORDER BY created_at DESC").fetchall()
-        return [self.get(row["task_id"]) for row in rows]
+        return [task for row in rows if (task := self.get(row["task_id"])) is not None]
 
     def save_result(self, task_id: str, *, total_score: float, dimension_scores: dict[str, float], error_categories: dict[str, int], completed_count: int, failed_count: int, retry_count: int, accuracy: float | None = None, parse_success_rate: float | None = None, request_success_count: int | None = None, parse_failed_count: int = 0) -> None:
         if self.get(task_id) is None:
@@ -73,14 +74,14 @@ class TaskRepository:
             return None
         return {"task_id": task_id, "total_score": row["total_score"], "accuracy": row["accuracy"] if row["accuracy"] is not None else row["total_score"], "parse_success_rate": row["parse_success_rate"], "request_success_count": row["request_success_count"], "parse_failed_count": row["parse_failed_count"], "dimension_scores": json.loads(row["dimension_scores_json"]), "error_categories": json.loads(row["error_categories_json"]), "completed_count": row["completed_count"], "failed_count": row["failed_count"], "retry_count": row["retry_count"]}
 
-    def get_samples(self, task_id: str, offset: int = 0, limit: int = 50) -> tuple[list[dict], int]:
+    def get_samples(self, task_id: str, offset: int = 0, limit: int = 50) -> tuple[builtins.list[dict], int]:
         task = self.get(task_id)
         if task is None:
             raise KeyError(task_id)
         path = self.artifact_root / task_id / "samples.jsonl"
         if not path.exists():
             return [], 0
-        records = []
+        records: builtins.list[dict] = []
         total = 0
         with path.open("r", encoding="utf-8") as handle:
             for line in handle:

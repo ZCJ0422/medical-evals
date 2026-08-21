@@ -28,8 +28,10 @@ def _retry_name(repo: TaskRepository, name: str) -> str:
     for existing in repo.list():
         existing_base = existing.name
         existing_depth = 0
-        while _RETRY_SUFFIX.search(existing_base):
+        while True:
             match = _RETRY_SUFFIX.search(existing_base)
+            if match is None:
+                break
             existing_depth = max(existing_depth + 1, int(match.group(1) or 0))
             existing_base = _RETRY_SUFFIX.sub("", existing_base)
         if existing_base == base_name:

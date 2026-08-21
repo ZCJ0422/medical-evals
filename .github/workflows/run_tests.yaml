@@ -37,7 +37,7 @@ jobs:
         PYTHONPATH=.:backend python -m pytest -q
 
     - name: Run mypy
-      run: mypy --config-file=mypy.ini --no-site-packages medical_evals backend/medical_evals_api
+      run: MYPYPATH=backend mypy --config-file=mypy.ini --no-site-packages .
 
   frontend:
     runs-on: ubuntu-latest

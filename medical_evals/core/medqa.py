@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
+from typing import Any, cast
 
 from medical_evals.datasets.medqa import OPTION_KEYS
 from medical_evals.graders.choice_parser import parse_choice
@@ -23,7 +24,7 @@ MEDQA_ERROR_STAGES = frozenset({"request"})
 
 def _safe_nonnegative_int(value: object, default: int = 0) -> int:
     try:
-        normalized = int(value)
+        normalized = int(cast(Any, value))
     except (TypeError, ValueError):
         return default
     return normalized if normalized >= 0 else default
@@ -31,7 +32,7 @@ def _safe_nonnegative_int(value: object, default: int = 0) -> int:
 
 def _safe_positive_int(value: object, default: int) -> int:
     try:
-        normalized = int(value)
+        normalized = int(cast(Any, value))
     except (TypeError, ValueError):
         return default
     return normalized if normalized >= 1 else default
@@ -39,7 +40,7 @@ def _safe_positive_int(value: object, default: int) -> int:
 
 def _safe_status_code(value: object) -> int | None:
     try:
-        status_code = int(value)
+        status_code = int(cast(Any, value))
     except (TypeError, ValueError):
         return None
     return status_code if 100 <= status_code <= 599 else None
