@@ -209,6 +209,11 @@ preflight 只接受 catalog 中登记的数据集和对应 rubric；前端直接
 第一版按单机内网部署，不支持公开注册、团队角色、用户上传数据集、自定义 Rubric、
 多任务对比、审计日志或自动清理。
 
+Worker 启动时会把上一次进程遗留的 `running` 任务保守标记为 `failed`，保留已有
+Artifact 和 checkpoint，不会自动重复执行；管理员可通过 retry 创建新的运行。
+这是单 Worker 部署下避免重复计分的故障恢复策略，后续引入多 Worker 时需要升级为
+带租约和 Worker ownership 的队列协议。
+
 新增评测时建议遵循以下顺序：
 
 1. 先定义 JSONL 数据契约并为非法输入编写测试；

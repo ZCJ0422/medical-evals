@@ -156,3 +156,23 @@ class TaskRepository:
         if updated.rowcount == 0:
             return self.get(task_id) or task
         return replace(task, status=status, error=error, updated_at=updated_at)
+
+    def recover_interrupted_tasks(self, error: str) -> int:
+        """Mark tasks left running by a stopped Worker as failed.
+
+        A new Worker must not silently re-run a task whose checkpoint may have
+        been partially written. The user can explicitly create a retry after
+        inspecting the preserved artifacts.
+        """
+        with connect(self.database_path) as db:
+            updated = db.execute(
+                "UPDATE tasks SET status = ?, error = ?, updated_at = ? "
+                "WHERE status = ?",
+                (
+                    TaskStatus.FAILED.value,
+                    error,
+                    utc_now(),
+                    TaskStatus.RUNNING.value,
+                ),
+            )
+        return updated.rowcount

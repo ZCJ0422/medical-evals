@@ -8,7 +8,6 @@ from .db import connect
 from .repositories.tasks import TaskRepository
 from .queue import LocalTaskQueue
 from .worker import Worker
-from .schemas.common import TaskStatus
 
 
 def main() -> None:
@@ -23,9 +22,9 @@ def main() -> None:
     if args.command == "worker":
         repo = TaskRepository(settings.database_path, settings.artifact_dir)
         queue = LocalTaskQueue(repo)
-        for task in repo.list():
-            if task.status == TaskStatus.RUNNING:
-                repo.set_status(task.task_id, TaskStatus.QUEUED)
+        repo.recover_interrupted_tasks(
+            "Worker stopped before the evaluation reached a terminal state; create a retry to run it again"
+        )
         while True:
             task_id = queue.claim_next()
             if task_id:

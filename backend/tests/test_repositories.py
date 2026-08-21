@@ -39,6 +39,22 @@ def test_terminal_status_does_not_overwrite_cancellation(tmp_path):
     assert repo.get(task.task_id).status == TaskStatus.CANCELLED
 
 
+def test_recover_interrupted_tasks_marks_running_tasks_failed(tmp_path):
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    running = repo.create(name="running", target_model_id="model", judge_model_id="", dataset_version_id="dataset", rubric_id="rubric")
+    queued = repo.create(name="queued", target_model_id="model", judge_model_id="", dataset_version_id="dataset", rubric_id="rubric")
+    repo.set_status(running.task_id, TaskStatus.RUNNING)
+
+    recovered = repo.recover_interrupted_tasks("worker interrupted")
+
+    assert recovered == 1
+    recovered_task = repo.get(running.task_id)
+    assert recovered_task is not None
+    assert recovered_task.status == TaskStatus.FAILED
+    assert recovered_task.error == "worker interrupted"
+    assert repo.get(queued.task_id).status == TaskStatus.QUEUED
+
+
 def test_task_repository_persists_credential_environment_names(tmp_path):
     repo = TaskRepository(tmp_path / "tasks.sqlite3")
     task = repo.create(
