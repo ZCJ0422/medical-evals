@@ -209,10 +209,11 @@ preflight 只接受 catalog 中登记的数据集和对应 rubric；前端直接
 第一版按单机内网部署，不支持公开注册、团队角色、用户上传数据集、自定义 Rubric、
 多任务对比、审计日志或自动清理。
 
-Worker 启动时会把上一次进程遗留的 `running` 任务保守标记为 `failed`，保留已有
-Artifact 和 checkpoint，不会自动重复执行；管理员可通过 retry 创建新的运行。
-这是单 Worker 部署下避免重复计分的故障恢复策略，后续引入多 Worker 时需要升级为
-带租约和 Worker ownership 的队列协议。
+Worker 启动时会把没有租约归属的遗留 `running` 任务保守标记为 `failed`，保留已有
+Artifact 和 checkpoint，不会自动重复执行；管理员可通过 retry 创建新的运行。新任务
+领取时会原子绑定 Worker ownership 和过期时间，Worker 在进度更新时续租；租约过期后
+任务会失败，旧 Worker 不能再写入进度、结果或终态。该协议已经支持多个 Worker 共享
+SQLite 的基础互斥，但生产级多机部署仍应迁移到外部队列并补充租约压力测试。
 
 新增评测时建议遵循以下顺序：
 

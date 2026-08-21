@@ -16,9 +16,11 @@ def _safe_error(error: Exception) -> str:
 
 
 class Worker:
-    def __init__(self, repository: TaskRepository, adapter: EvaluationAdapter | None = None):
+    def __init__(self, repository: TaskRepository, adapter: EvaluationAdapter | None = None, worker_id: str = "", lease_seconds: int = 300):
         self.repository = repository
         self.adapter = adapter or OpenAICompatibleEvaluationAdapter()
+        self.worker_id = worker_id
+        self.lease_seconds = lease_seconds
 
     def run_task(self, task_id: str) -> EvaluationTask:
         task = self.repository.get(task_id)
@@ -26,6 +28,8 @@ class Worker:
             raise KeyError(task_id)
         if task.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
             return task
+        if self.worker_id and task.status == TaskStatus.RUNNING and task.lease_owner != self.worker_id:
+            raise RuntimeError("Worker does not own the task lease")
         artifacts = ArtifactWriter(self.repository.artifact_root, task_id)
         artifacts.log("Run started")
         artifacts.log(f"[config] dataset={task.dataset_version_id}")
@@ -68,12 +72,16 @@ class Worker:
         def update_stage(next_stage: str) -> None:
             nonlocal stage
             stage = next_stage
+            if self.worker_id and not self.repository.renew_lease(task_id, self.worker_id, self.lease_seconds):
+                raise RuntimeError("Worker lease lost while updating task stage")
             current = self.repository.get(task_id)
             if current is not None:
-                self.repository.update_progress(task_id, current.progress.model_copy(update={"stage": stage}))
+                self.repository.update_progress(task_id, current.progress.model_copy(update={"stage": stage}), self.worker_id)
 
         def update_progress(progress: TaskProgress) -> None:
-            self.repository.update_progress(task_id, progress.model_copy(update={"stage": stage}))
+            if self.worker_id and not self.repository.renew_lease(task_id, self.worker_id, self.lease_seconds):
+                raise RuntimeError("Worker lease lost while updating task progress")
+            self.repository.update_progress(task_id, progress.model_copy(update={"stage": stage}), self.worker_id)
 
         setattr(self.adapter, "on_stage", update_stage)
         if hasattr(self.adapter, "on_sample"):
@@ -95,7 +103,7 @@ class Worker:
         except Exception as error:
             artifacts.log(f"task failed: {_safe_error(error)}")
             update_stage("failed")
-            return self.repository.set_status(task_id, TaskStatus.FAILED, _safe_error(error))
+            return self.repository.set_status_if_not_cancelled(task_id, TaskStatus.FAILED, _safe_error(error), self.worker_id)
         finally:
             for client in (getattr(self.adapter, "target_client", None), getattr(self.adapter, "judge_client", None)):
                 close = getattr(client, "close", None)
@@ -106,12 +114,13 @@ class Worker:
             return current
         final_stage = "partial_failed" if result.failed_count else "completed"
         final = TaskProgress(completed_count=result.total_count, total_count=result.total_count, progress_percent=100, success_count=result.success_count, failed_count=result.failed_count, retry_count=result.retry_count, stage=final_stage)
-        self.repository.update_progress(task_id, final)
-        self.repository.save_result(task_id, total_score=result.total_score, dimension_scores=result.dimension_scores or {}, error_categories=result.error_categories or {}, completed_count=result.success_count, failed_count=result.failed_count, retry_count=result.retry_count, accuracy=result.accuracy, parse_success_rate=result.parse_success_rate, request_success_count=result.request_success_count or result.success_count, parse_failed_count=result.parse_failed_count)
+        self.repository.update_progress(task_id, final, self.worker_id)
+        self.repository.save_result(task_id, total_score=result.total_score, dimension_scores=result.dimension_scores or {}, error_categories=result.error_categories or {}, completed_count=result.success_count, failed_count=result.failed_count, retry_count=result.retry_count, accuracy=result.accuracy, parse_success_rate=result.parse_success_rate, request_success_count=result.request_success_count or result.success_count, parse_failed_count=result.parse_failed_count, worker_id=self.worker_id)
         artifacts.write_summary({"task_id": task_id, "total_score": result.total_score, "accuracy": result.accuracy, "parse_success_rate": result.parse_success_rate, "completed_count": result.total_count, "failed_count": result.failed_count, "retry_count": result.retry_count, "request_success_count": result.request_success_count or result.success_count, "parse_failed_count": result.parse_failed_count})
         artifacts.log(f"[summary] completed={result.success_count} failed={result.failed_count} retries={result.retry_count} total_score={result.total_score:.4f}")
         artifacts.log("Run completed")
         return self.repository.set_status_if_not_cancelled(
             task_id,
             TaskStatus.PARTIAL_FAILED if result.failed_count else TaskStatus.COMPLETED,
+            worker_id=self.worker_id,
         )

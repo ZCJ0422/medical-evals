@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 
 from ..db import connect
@@ -40,7 +41,7 @@ class TaskRepository:
             max_samples=max_samples,
         )
         with connect(self.database_path) as db:
-            db.execute("INSERT INTO tasks (task_id,name,target_model_id,judge_model_id,dataset_version_id,rubric_id,status,progress_json,created_at,updated_at,error,target_base_url,target_api_key_env,judge_base_url,judge_api_key_env,max_samples,target_api_key_enc,judge_api_key_enc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task.task_id, task.name, task.target_model_id, task.judge_model_id, task.dataset_version_id, task.rubric_id, task.status.value, task.progress.model_dump_json(), task.created_at, task.updated_at, task.error, target_base_url, target_api_key_env, judge_base_url, judge_api_key_env, max_samples, target_api_key_enc, judge_api_key_enc))
+            db.execute("INSERT INTO tasks (task_id,name,target_model_id,judge_model_id,dataset_version_id,rubric_id,status,progress_json,created_at,updated_at,error,target_base_url,target_api_key_env,judge_base_url,judge_api_key_env,max_samples,target_api_key_enc,judge_api_key_enc,lease_owner,lease_expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task.task_id, task.name, task.target_model_id, task.judge_model_id, task.dataset_version_id, task.rubric_id, task.status.value, task.progress.model_dump_json(), task.created_at, task.updated_at, task.error, target_base_url, target_api_key_env, judge_base_url, judge_api_key_env, max_samples, target_api_key_enc, judge_api_key_enc, "", ""))
         return task
 
     def get(self, task_id: str) -> EvaluationTask | None:
@@ -48,15 +49,15 @@ class TaskRepository:
             row = db.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         if row is None:
             return None
-        return EvaluationTask(row["task_id"], row["name"], row["target_model_id"], row["judge_model_id"], row["dataset_version_id"], row["rubric_id"], TaskStatus(row["status"]), TaskProgress.model_validate_json(row["progress_json"]), row["created_at"], row["updated_at"], row["error"], row["target_base_url"], row["target_api_key_env"], row["target_api_key_enc"], row["judge_base_url"], row["judge_api_key_env"], row["judge_api_key_enc"], row["max_samples"])
+        return EvaluationTask(row["task_id"], row["name"], row["target_model_id"], row["judge_model_id"], row["dataset_version_id"], row["rubric_id"], TaskStatus(row["status"]), TaskProgress.model_validate_json(row["progress_json"]), row["created_at"], row["updated_at"], row["error"], row["target_base_url"], row["target_api_key_env"], row["target_api_key_enc"], row["judge_base_url"], row["judge_api_key_env"], row["judge_api_key_enc"], row["max_samples"], row["lease_owner"], row["lease_expires_at"])
 
     def next_queued(self) -> EvaluationTask | None:
         with connect(self.database_path) as db:
             row = db.execute("SELECT task_id FROM tasks WHERE status = 'queued' ORDER BY created_at LIMIT 1").fetchone()
         return self.get(row["task_id"]) if row else None
 
-    def claim_next(self) -> EvaluationTask | None:
-        """Atomically move one queued task to running and return it."""
+    def claim_next(self, worker_id: str = "", lease_seconds: int = 300) -> EvaluationTask | None:
+        """Atomically move one queued task to running and assign its lease."""
         with connect(self.database_path) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
@@ -65,24 +66,49 @@ class TaskRepository:
             if row is None:
                 return None
             now = utc_now()
+            expires_at = (datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)).isoformat()
             updated = db.execute(
-                "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ? AND status = ?",
-                (TaskStatus.RUNNING.value, now, row["task_id"], TaskStatus.QUEUED.value),
+                "UPDATE tasks SET status = ?, updated_at = ?, lease_owner = ?, lease_expires_at = ? WHERE task_id = ? AND status = ?",
+                (TaskStatus.RUNNING.value, now, worker_id, expires_at, row["task_id"], TaskStatus.QUEUED.value),
             )
             if updated.rowcount != 1:
                 return None
             claimed_id = row["task_id"]
         return self.get(claimed_id)
 
+    def renew_lease(self, task_id: str, worker_id: str, lease_seconds: int = 300) -> bool:
+        """Extend a live task lease only for its current owner."""
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)).isoformat()
+        with connect(self.database_path) as db:
+            updated = db.execute(
+                "UPDATE tasks SET updated_at = ?, lease_expires_at = ? WHERE task_id = ? AND status = ? AND lease_owner = ?",
+                (utc_now(), expires_at, task_id, TaskStatus.RUNNING.value, worker_id),
+            )
+        return updated.rowcount == 1
+
+    def recover_expired_leases(self, error: str) -> int:
+        """Fail running tasks whose owners stopped renewing their leases."""
+        now = utc_now()
+        with connect(self.database_path) as db:
+            updated = db.execute(
+                "UPDATE tasks SET status = ?, error = ?, updated_at = ?, lease_owner = '', lease_expires_at = '' WHERE status = ? AND lease_expires_at != '' AND lease_expires_at <= ?",
+                (TaskStatus.FAILED.value, error, now, TaskStatus.RUNNING.value, now),
+            )
+        return updated.rowcount
+
     def list(self) -> list[EvaluationTask]:
         with connect(self.database_path) as db:
             rows = db.execute("SELECT task_id FROM tasks ORDER BY created_at DESC").fetchall()
         return [task for row in rows if (task := self.get(row["task_id"])) is not None]
 
-    def save_result(self, task_id: str, *, total_score: float, dimension_scores: dict[str, float], error_categories: dict[str, int], completed_count: int, failed_count: int, retry_count: int, accuracy: float | None = None, parse_success_rate: float | None = None, request_success_count: int | None = None, parse_failed_count: int = 0) -> None:
+    def save_result(self, task_id: str, *, total_score: float, dimension_scores: dict[str, float], error_categories: dict[str, int], completed_count: int, failed_count: int, retry_count: int, accuracy: float | None = None, parse_success_rate: float | None = None, request_success_count: int | None = None, parse_failed_count: int = 0, worker_id: str = "") -> None:
         if self.get(task_id) is None:
             raise KeyError(task_id)
         with connect(self.database_path) as db:
+            if worker_id:
+                lease = db.execute("SELECT 1 FROM tasks WHERE task_id = ? AND status = ? AND lease_owner = ?", (task_id, TaskStatus.RUNNING.value, worker_id)).fetchone()
+                if lease is None:
+                    raise RuntimeError("Worker lease lost while saving task result")
             db.execute("INSERT OR REPLACE INTO task_results (task_id,total_score,dimension_scores_json,error_categories_json,completed_count,failed_count,retry_count,accuracy,parse_success_rate,request_success_count,parse_failed_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_id, total_score, json.dumps(dimension_scores), json.dumps(error_categories), completed_count, failed_count, retry_count, accuracy, parse_success_rate, request_success_count if request_success_count is not None else completed_count, parse_failed_count))
 
     def get_result(self, task_id: str) -> dict | None:
@@ -123,13 +149,18 @@ class TaskRepository:
             db.execute("DELETE FROM task_results WHERE task_id = ?", (task_id,))
         return cursor.rowcount > 0
 
-    def update_progress(self, task_id: str, progress: TaskProgress) -> EvaluationTask:
+    def update_progress(self, task_id: str, progress: TaskProgress, worker_id: str = "") -> EvaluationTask:
         task = self.get(task_id)
         if task is None:
             raise KeyError(task_id)
         updated = replace(task, progress=progress, updated_at=utc_now())
         with connect(self.database_path) as db:
-            db.execute("UPDATE tasks SET progress_json = ?, updated_at = ? WHERE task_id = ?", (progress.model_dump_json(), updated.updated_at, task_id))
+            if worker_id:
+                updated_row = db.execute("UPDATE tasks SET progress_json = ?, updated_at = ? WHERE task_id = ? AND status = ? AND lease_owner = ?", (progress.model_dump_json(), updated.updated_at, task_id, TaskStatus.RUNNING.value, worker_id))
+                if updated_row.rowcount != 1:
+                    raise RuntimeError("Worker lease lost while updating task progress")
+            else:
+                db.execute("UPDATE tasks SET progress_json = ?, updated_at = ? WHERE task_id = ?", (progress.model_dump_json(), updated.updated_at, task_id))
         return updated
 
     def set_status(self, task_id: str, status: TaskStatus, error: str | None = None) -> EvaluationTask:
@@ -138,21 +169,20 @@ class TaskRepository:
             raise KeyError(task_id)
         updated = replace(task, status=status, error=error, updated_at=utc_now())
         with connect(self.database_path) as db:
-            db.execute("UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE task_id = ?", (status.value, error, updated.updated_at, task_id))
+            db.execute("UPDATE tasks SET status = ?, error = ?, updated_at = ?, lease_owner = CASE WHEN ? = ? THEN lease_owner ELSE '' END, lease_expires_at = CASE WHEN ? = ? THEN lease_expires_at ELSE '' END WHERE task_id = ?", (status.value, error, updated.updated_at, status.value, TaskStatus.RUNNING.value, status.value, TaskStatus.RUNNING.value, task_id))
         return updated
 
-    def set_status_if_not_cancelled(self, task_id: str, status: TaskStatus, error: str | None = None) -> EvaluationTask:
+    def set_status_if_not_cancelled(self, task_id: str, status: TaskStatus, error: str | None = None, worker_id: str = "") -> EvaluationTask:
         """Set a terminal status without overwriting a concurrent cancellation."""
         task = self.get(task_id)
         if task is None:
             raise KeyError(task_id)
         updated_at = utc_now()
         with connect(self.database_path) as db:
-            updated = db.execute(
-                "UPDATE tasks SET status = ?, error = ?, updated_at = ? "
-                "WHERE task_id = ? AND status != ?",
-                (status.value, error, updated_at, task_id, TaskStatus.CANCELLED.value),
-            )
+            if worker_id:
+                updated = db.execute("UPDATE tasks SET status = ?, error = ?, updated_at = ?, lease_owner = '', lease_expires_at = '' WHERE task_id = ? AND status != ? AND lease_owner = ?", (status.value, error, updated_at, task_id, TaskStatus.CANCELLED.value, worker_id))
+            else:
+                updated = db.execute("UPDATE tasks SET status = ?, error = ?, updated_at = ?, lease_owner = '', lease_expires_at = '' WHERE task_id = ? AND status != ?", (status.value, error, updated_at, task_id, TaskStatus.CANCELLED.value))
         if updated.rowcount == 0:
             return self.get(task_id) or task
         return replace(task, status=status, error=error, updated_at=updated_at)
@@ -166,8 +196,8 @@ class TaskRepository:
         """
         with connect(self.database_path) as db:
             updated = db.execute(
-                "UPDATE tasks SET status = ?, error = ?, updated_at = ? "
-                "WHERE status = ?",
+                "UPDATE tasks SET status = ?, error = ?, updated_at = ?, lease_owner = '', lease_expires_at = '' "
+                "WHERE status = ? AND lease_owner = ''",
                 (
                     TaskStatus.FAILED.value,
                     error,

@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   judge_api_key_env TEXT NOT NULL DEFAULT '',
   max_samples INTEGER,
   target_api_key_enc TEXT NOT NULL DEFAULT '',
-  judge_api_key_enc TEXT NOT NULL DEFAULT ''
+  judge_api_key_enc TEXT NOT NULL DEFAULT '',
+  lease_owner TEXT NOT NULL DEFAULT '',
+  lease_expires_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS task_results (
@@ -53,6 +55,9 @@ def connect(path: Path) -> sqlite3.Connection:
     if "max_samples" not in columns:
         connection.execute("ALTER TABLE tasks ADD COLUMN max_samples INTEGER")
     for name in ("target_api_key_enc", "judge_api_key_enc"):
+        if name not in columns:
+            connection.execute(f"ALTER TABLE tasks ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+    for name in ("lease_owner", "lease_expires_at"):
         if name not in columns:
             connection.execute(f"ALTER TABLE tasks ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
     result_columns = {row["name"] for row in connection.execute("PRAGMA table_info(task_results)")}

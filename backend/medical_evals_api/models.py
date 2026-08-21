@@ -28,3 +28,5 @@ class EvaluationTask:
     judge_api_key_env: str = ""
     judge_api_key_enc: str = ""
     max_samples: int | None = None
+    lease_owner: str = ""
+    lease_expires_at: str = ""

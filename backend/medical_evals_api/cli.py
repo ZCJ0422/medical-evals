@@ -1,4 +1,5 @@
 import argparse
+import uuid
 
 import uvicorn
 import time
@@ -22,13 +23,20 @@ def main() -> None:
     if args.command == "worker":
         repo = TaskRepository(settings.database_path, settings.artifact_dir)
         queue = LocalTaskQueue(repo)
+        worker_id = uuid.uuid4().hex
+        repo.recover_expired_leases(
+            "Worker lease expired before the evaluation reached a terminal state; create a retry to run it again"
+        )
         repo.recover_interrupted_tasks(
             "Worker stopped before the evaluation reached a terminal state; create a retry to run it again"
         )
         while True:
-            task_id = queue.claim_next()
+            repo.recover_expired_leases(
+                "Worker lease expired before the evaluation reached a terminal state; create a retry to run it again"
+            )
+            task_id = queue.claim_next(worker_id)
             if task_id:
-                try: Worker(repo).run_task(task_id)
+                try: Worker(repo, worker_id=worker_id).run_task(task_id)
                 except Exception as error: print(f"worker task {task_id} failed: {error}", flush=True)
             else:
                 time.sleep(1)
