@@ -1,5 +1,10 @@
+import hashlib
+import hmac
+
 from fastapi.testclient import TestClient
 
+from medical_evals_api import auth
+from medical_evals_api.config import settings
 from medical_evals_api.main import app
 
 
@@ -26,3 +31,16 @@ def test_me_returns_admin_identity():
     response = client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.json() == {"username": "admin", "role": "admin"}
+
+
+def test_malformed_signed_payload_is_rejected_as_unauthorized():
+    encoded = auth._b64(b"[]")
+    signature = auth._b64(hmac.new(settings.token_secret.encode(), encoded.encode(), hashlib.sha256).digest())
+
+    response = client.get(
+        "/api/me",
+        headers={"Authorization": f"Bearer {encoded}.{signature}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid authentication token"}

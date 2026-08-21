@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -49,10 +50,12 @@ def decode_access_token(token: str) -> AdminIdentity:
         if not hmac.compare_digest(signature, expected):
             raise ValueError("invalid signature")
         payload = json.loads(_unb64(encoded))
+        if not isinstance(payload, dict):
+            raise ValueError("invalid payload")
         if payload.get("role") != "admin" or int(payload["exp"]) <= int(time.time()):
             raise ValueError("expired token")
         return AdminIdentity(username=str(payload["sub"]))
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (KeyError, TypeError, ValueError, OverflowError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication token") from exc
 
 
