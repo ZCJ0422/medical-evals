@@ -7,7 +7,7 @@ import time
 from .config import settings, validate_runtime_security
 from .db import connect
 from .repositories.tasks import TaskRepository
-from .queue import LocalTaskQueue
+from .queue import LocalTaskQueue, TaskQueue
 from .worker import Worker
 
 
@@ -22,7 +22,7 @@ def main() -> None:
         return
     if args.command == "worker":
         repo = TaskRepository(settings.database_path, settings.artifact_dir)
-        queue = LocalTaskQueue(repo)
+        queue: TaskQueue = LocalTaskQueue(repo)
         worker_id = uuid.uuid4().hex
         repo.recover_expired_leases(
             "Worker lease expired before the evaluation reached a terminal state; create a retry to run it again"

@@ -217,6 +217,10 @@ SQLite 的基础互斥，但生产级多机部署仍应迁移到外部队列并�
 租约时长由 `MEDICAL_EVALS_WORKER_LEASE_SECONDS` 配置，允许根据模型请求最长耗时调整，
 取值范围为 30 秒至 24 小时。
 
+队列调用通过 `TaskQueue` 协议隔离；当前 `LocalTaskQueue` 仅把 SQLite 仓储作为队列源。
+未来替换为 Redis/PostgreSQL 实现时，必须保留 `enqueue`、带 owner 的原子
+`claim_next` 和租约语义，Worker 与 API 编排层不应直接依赖具体队列客户端。
+
 新增评测时建议遵循以下顺序：
 
 1. 先定义 JSONL 数据契约并为非法输入编写测试；

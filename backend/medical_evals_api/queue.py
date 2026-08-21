@@ -1,5 +1,17 @@
+from typing import Protocol
+
 from .repositories.tasks import TaskRepository
 from .schemas.common import TaskStatus
+
+
+class TaskQueue(Protocol):
+    """Queue boundary shared by the Worker loop and queue implementations."""
+
+    def enqueue(self, task_id: str) -> None:
+        ...
+
+    def claim_next(self, worker_id: str = "", lease_seconds: int = 300) -> str | None:
+        ...
 
 
 class LocalTaskQueue:
