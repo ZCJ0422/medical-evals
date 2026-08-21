@@ -11,8 +11,9 @@ from ..schemas.common import TaskProgress, TaskStatus
 
 
 class TaskRepository:
-    def __init__(self, database_path):
+    def __init__(self, database_path, artifact_root=None):
         self.database_path = database_path
+        self.artifact_root = artifact_root or artifact_root_for_database(database_path)
         with connect(database_path):
             pass
 
@@ -76,18 +77,26 @@ class TaskRepository:
         task = self.get(task_id)
         if task is None:
             raise KeyError(task_id)
-        path = artifact_root_for_database(self.database_path) / task_id / "samples.jsonl"
+        path = self.artifact_root / task_id / "samples.jsonl"
         if not path.exists():
             return [], 0
         records = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(value, dict):
-                records.append(value)
-        return records[offset:offset + limit], len(records)
+        total = 0
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(value, dict):
+                    continue
+                if total >= offset and len(records) < limit:
+                    records.append(value)
+                total += 1
+        return records, total
 
     def delete(self, task_id: str) -> bool:
         with connect(self.database_path) as db:

@@ -187,9 +187,15 @@ uv run pytest -q tests
 一个独立 Judge Model、一个平台内置数据集版本和一个平台内置 Rubric。
 
 评测任务通过 HTTP API 创建后异步执行，任务状态和进度写入 SQLite；详细运行
-产物写入本地 artifacts 目录。普通结果接口只返回聚合指标，基准题目、标准答案
+产物写入配置的 artifacts 目录。默认数据库和 artifacts 路径均以仓库根目录为基准，
+不依赖 API/Worker 的启动目录；可通过 `MEDICAL_EVALS_DATABASE_PATH` 和
+`MEDICAL_EVALS_ARTIFACT_DIR` 覆盖。普通结果接口只返回聚合指标，基准题目、标准答案
 和完整 Rubric 不得进入前端构建产物、URL、localStorage 或普通 API 响应。原始样本
 如需查看，必须通过管理员受保护接口访问。
+
+Workbench 逐题 Artifact 使用统一字段 `raw_output` 和 `rubric_judgments`；为兼容
+历史 HealthBench 记录，同时保留 `predicted` 和 `rubric_results` 别名。运行中的
+结果页只在样本数量变化时刷新逐题列表，日志和聚合进度单独轮询。
 
 第一版按单机内网部署，不支持公开注册、团队角色、用户上传数据集、自定义 Rubric、
 多任务对比、审计日志或自动清理。

@@ -14,7 +14,7 @@ from .models import (
     HealthBenchSampleResult,
     SampleError,
 )
-from .retry import classify_error
+from .retry import classify_error, normalize_error_category, status_code_for_error
 
 
 def build_healthbench_prompt(sample: dict) -> list[dict]:
@@ -72,8 +72,43 @@ def _safe_error(error: Exception, *, stage: str, retry_count: int = 0) -> Sample
         message=f"{stage} failed: {category}",
         stage=stage,
         retry_count=max(0, int(retry_count)),
-        status_code=getattr(error, "status_code", None),
+        status_code=status_code_for_error(error),
         attempt=max(1, int(retry_count) + 1),
+    )
+
+
+def make_safe_healthbench_error(
+    *,
+    category: object,
+    stage: object,
+    retry_count: object = 0,
+    status_code: object = None,
+    attempt: object = None,
+) -> SampleError:
+    """Create a safe persisted HealthBench error with target/judge context."""
+    safe_stage = stage if isinstance(stage, str) and stage in {"target", "judge"} else "target"
+    try:
+        safe_retry_count = max(0, int(retry_count))
+    except (TypeError, ValueError):
+        safe_retry_count = 0
+    try:
+        safe_attempt = max(1, int(attempt)) if attempt is not None else safe_retry_count + 1
+    except (TypeError, ValueError):
+        safe_attempt = safe_retry_count + 1
+    try:
+        safe_status_code = int(status_code) if status_code is not None else None
+    except (TypeError, ValueError):
+        safe_status_code = None
+    if safe_status_code is not None and not 100 <= safe_status_code <= 599:
+        safe_status_code = None
+    safe_category = normalize_error_category(category)
+    return SampleError(
+        category=safe_category,
+        message=f"{safe_stage} failed: {safe_category}",
+        stage=safe_stage,
+        retry_count=safe_retry_count,
+        status_code=safe_status_code,
+        attempt=safe_attempt,
     )
 
 
@@ -120,6 +155,25 @@ def evaluate_healthbench_sample(
     on_event=None,
 ) -> HealthBenchSampleResult:
     """Evaluate one sample; transport retries belong to the shared clients."""
+    def scoped_events(stage):
+        def forward(event):
+            # OpenAI-compatible transports use the generic ``request`` stage.
+            # Add the caller context so target and judge requests remain
+            # distinguishable in adapter logs and progress reporting.
+            if event.stage == "request":
+                event = EvaluationEvent(
+                    event.kind,
+                    stage,
+                    attempt=event.attempt,
+                    category=event.category,
+                    message=event.message,
+                )
+            if on_event:
+                on_event(event)
+        return forward
+
+    target_events = scoped_events("target")
+    judge_events = scoped_events("judge")
     try:
         target_response = None
         total_retries = 0
@@ -129,7 +183,7 @@ def evaluate_healthbench_sample(
                     on_event(EvaluationEvent("request_started", "target", attempt=target_attempt + 1, message="request started"))
                 target_response = target.complete(CompletionRequest(
                     build_healthbench_prompt(sample), target_model, target_temperature, target_max_tokens
-                ), on_event=on_event)
+                ), on_event=target_events)
                 break
             except Exception as target_error:
                 category, retryable = classify_error(target_error)
@@ -152,7 +206,7 @@ def evaluate_healthbench_sample(
                     judge_response = judge.complete(CompletionRequest(
                         build_rubric_judge_prompt(sample["prompt"], answer, rubric["criterion"]),
                         judge_model, judge_temperature, judge_max_tokens,
-                    ), on_event=on_event)
+                    ), on_event=judge_events)
                     if on_event:
                         on_event(EvaluationEvent("request_completed", "judge", message="request completed"))
                     return_value = parse_rubric_judgment(judge_response.text)
@@ -195,7 +249,7 @@ def evaluate_healthbench_sample(
             positive_max=None,
             tag_scores={},
             retry_count=int(locals().get("total_retries", getattr(locals().get("target_response"), "retry_count", 0))),
-            error=_safe_error(error, stage=stage),
+        error=_safe_error(error, stage=stage, retry_count=locals().get("total_retries", 0)),
         )
 
 

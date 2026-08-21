@@ -15,6 +15,7 @@ from medical_evals.core.medqa import (
 from medical_evals.core.healthbench import (
     aggregate_healthbench,
     evaluate_healthbench_sample,
+    make_safe_healthbench_error,
 )
 from medical_evals.core.models import CompletionRequest, EvaluationEvent, HealthBenchSampleResult, MedQASampleResult, ModelResponse
 from medical_evals.datasets.medqa import load_medqa_samples
@@ -151,6 +152,10 @@ def serialize_healthbench_result(index: int, sample: dict, result: HealthBenchSa
     return {
         "index": index,
         "sample_id": result.sample_id,
+        # Keep the canonical sample-record fields aligned with MedQA and the UI.
+        # The legacy HealthBench names remain below for existing artifacts.
+        "raw_output": result.raw_output,
+        "rubric_judgments": list(result.rubric_judgments),
         "predicted": result.raw_output,
         "rubric_results": list(result.rubric_judgments),
         "achieved": result.achieved,
@@ -161,6 +166,7 @@ def serialize_healthbench_result(index: int, sample: dict, result: HealthBenchSa
         "error_category": error.category if error else None,
         "error_stage": error.stage if error else None,
         "error_status_code": error.status_code if error else None,
+        "error_attempt": error.attempt if error else None,
         "retry_count": result.retry_count,
     }
 
@@ -168,16 +174,17 @@ def serialize_healthbench_result(index: int, sample: dict, result: HealthBenchSa
 def _deserialize_healthbench_record(record: dict) -> HealthBenchSampleResult:
     error = None
     if record.get("error"):
-        error = make_safe_medqa_error(
+        error = make_safe_healthbench_error(
             category=str(record.get("error_category") or "request_error"),
             stage=str(record.get("error_stage") or "target"),
             retry_count=int(record.get("retry_count", 0)),
             status_code=record.get("error_status_code"),
+            attempt=record.get("error_attempt"),
         )
     return HealthBenchSampleResult(
         sample_id=str(record.get("sample_id", "")),
-        raw_output=str(record.get("predicted", "")),
-        rubric_judgments=tuple(record.get("rubric_results", [])),
+        raw_output=str(record.get("raw_output", record.get("predicted", ""))),
+        rubric_judgments=tuple(record.get("rubric_judgments", record.get("rubric_results", []))),
         score=record.get("score"),
         achieved=record.get("achieved"),
         positive_max=record.get("positive_max"),

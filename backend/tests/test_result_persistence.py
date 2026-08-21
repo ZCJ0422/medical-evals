@@ -57,7 +57,7 @@ def test_run_log_endpoint_returns_task_log_file(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "database_path", tmp_path / "tasks.sqlite3")
     repo = TaskRepository(settings.database_path)
     task = repo.create(name="log run", target_model_id="target", judge_model_id="judge", dataset_version_id="medical-medqa.dev.v1", rubric_id="medical-medqa.default")
-    log_path = settings.database_path.parent / "artifacts" / task.task_id / "run.log"
+    log_path = settings.artifact_dir / task.task_id / "run.log"
     log_path.parent.mkdir(parents=True)
     log_path.write_text("task started\nresuming from checkpoint: 1 samples already completed\n", encoding="utf-8")
 

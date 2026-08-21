@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..auth import AdminIdentity, require_admin
-from ..artifacts import artifact_root_for_database
 from ..config import settings
 from ..repositories.tasks import TaskRepository
 from ..schemas.common import TaskStatus, TaskSummary
@@ -39,7 +38,7 @@ def _retry_name(repo: TaskRepository, name: str) -> str:
 
 
 def repository() -> TaskRepository:
-    return TaskRepository(settings.database_path)
+    return TaskRepository(settings.database_path, settings.artifact_dir)
 
 
 def _summary(task) -> TaskSummary:
@@ -157,7 +156,7 @@ def delete_evaluation(task_id: str, _: AdminIdentity = Depends(require_admin)) -
         raise HTTPException(status_code=409, detail="Cancel the running task before deleting it")
     if not repo.delete(task_id):
         raise HTTPException(status_code=404, detail="Evaluation task not found")
-    artifact_dir = artifact_root_for_database(settings.database_path) / task_id
+    artifact_dir = settings.artifact_dir / task_id
     if artifact_dir.exists():
         import shutil
         shutil.rmtree(artifact_dir)

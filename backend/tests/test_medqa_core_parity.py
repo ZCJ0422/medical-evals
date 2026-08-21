@@ -2,12 +2,14 @@ from medical_evals.core.medqa import aggregate_medqa, evaluate_medqa_sample
 from medical_evals.core.models import (
     CompletionRequest,
     EvaluationEvent,
+    HealthBenchSampleResult,
     MedQASampleResult,
     ModelResponse,
 )
 from medical_evals_api.evaluator_adapter import (
     OpenAICompatibleEvaluationAdapter,
     deserialize_medqa_record,
+    serialize_healthbench_result,
     serialize_medqa_result,
 )
 from medical_evals_api.models import EvaluationTask
@@ -79,6 +81,7 @@ def test_medqa_result_serialization_covers_success_parse_and_request_failure():
         for index, result in enumerate((success, parse_failure, request_failure))
     ]
 
+
     assert records == [
         {
             "index": 0,
@@ -128,6 +131,35 @@ def test_medqa_result_serialization_covers_success_parse_and_request_failure():
         parse_failure,
         request_failure,
     ]
+
+
+def test_healthbench_result_serialization_exposes_canonical_and_legacy_fields():
+    result = HealthBenchSampleResult(
+        sample_id="hb-1",
+        raw_output="A careful answer",
+        rubric_judgments=({"criteria_met": True, "explanation": "meets"},),
+        score=1.0,
+        achieved=1.0,
+        positive_max=1.0,
+        tag_scores={},
+        retry_count=0,
+    )
+
+    record = serialize_healthbench_result(0, {}, result)
+
+    assert record["raw_output"] == record["predicted"] == "A careful answer"
+    assert record["rubric_judgments"] == record["rubric_results"]
+
+
+def test_healthbench_request_events_keep_target_and_judge_context():
+    events = []
+    adapter = OpenAICompatibleEvaluationAdapter()
+    adapter.on_log = events.append
+
+    adapter._core_event(EvaluationEvent("request_started", "target"), sample_number=1, total_samples=1)
+    adapter._core_event(EvaluationEvent("request_started", "judge"), sample_number=1, total_samples=1)
+
+    assert events == ["[target] request started", "[judge] request started"]
 
 
 def test_checkpoint_and_new_results_share_the_core_aggregate(monkeypatch):

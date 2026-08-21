@@ -25,7 +25,7 @@ def test_delete_evaluation_removes_artifacts_from_database_scoped_root(tmp_path,
     monkeypatch.setattr(settings, "artifact_dir", tmp_path / "unrelated-artifacts")
     repo = TaskRepository(settings.database_path)
     task = repo.create(name="delete artifacts", target_model_id="target", judge_model_id="judge", dataset_version_id="medical-medqa.dev.v1", rubric_id="medical-medqa.default")
-    artifact_dir = tmp_path / "artifacts" / task.task_id
+    artifact_dir = settings.artifact_dir / task.task_id
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "run.log").write_text("log", encoding="utf-8")
 

@@ -2,7 +2,7 @@ from .evaluator_adapter import EvaluationAdapter, OpenAICompatibleEvaluationAdap
 from .models import EvaluationTask
 from .repositories.tasks import TaskRepository
 from .schemas.common import TaskProgress, TaskStatus
-from .artifacts import ArtifactWriter, artifact_root_for_database
+from .artifacts import ArtifactWriter
 from medical_evals.models import ModelSpec
 from medical_evals.reports import EvalRunMetadata, sha256_file
 from .evaluator_adapter import healthbench_samples_path
@@ -26,7 +26,7 @@ class Worker:
             raise KeyError(task_id)
         if task.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
             return task
-        artifacts = ArtifactWriter(artifact_root_for_database(self.repository.database_path), task_id)
+        artifacts = ArtifactWriter(self.repository.artifact_root, task_id)
         artifacts.log("Run started")
         artifacts.log(f"[config] dataset={task.dataset_version_id}")
         artifacts.log(f"[config] target_model={task.target_model_id}")

@@ -5,9 +5,9 @@ from datetime import datetime
 from pathlib import Path
 
 
-def artifact_root_for_database(database_path: Path) -> Path:
-    """Keep task artifacts beside the task database in every runtime mode."""
-    return database_path.parent / "artifacts"
+def artifact_root_for_database(database_path: Path, configured_root: Path | None = None) -> Path:
+    """Resolve the configured artifact root, with a database-local fallback."""
+    return configured_root if configured_root is not None else database_path.parent / "artifacts"
 
 
 class ArtifactWriter:

@@ -21,7 +21,7 @@ def main() -> None:
             pass
         return
     if args.command == "worker":
-        repo = TaskRepository(settings.database_path)
+        repo = TaskRepository(settings.database_path, settings.artifact_dir)
         queue = LocalTaskQueue(repo)
         for task in repo.list():
             if task.status == TaskStatus.RUNNING:

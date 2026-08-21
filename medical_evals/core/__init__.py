@@ -14,6 +14,7 @@ from .healthbench import (
     build_healthbench_prompt,
     build_rubric_judge_prompt,
     evaluate_healthbench_sample,
+    make_safe_healthbench_error,
     parse_rubric_judgment,
 )
 from .protocols import EventCallback, ModelClient
@@ -37,6 +38,7 @@ __all__ = [
     "build_healthbench_prompt",
     "build_rubric_judge_prompt",
     "evaluate_healthbench_sample",
+    "make_safe_healthbench_error",
     "parse_rubric_judgment",
     "EventCallback",
     "classify_error",

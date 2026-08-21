@@ -2,11 +2,13 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .paths import project_root
+
 
 class Settings(BaseSettings):
     environment: str = "development"
-    database_path: Path = Path("backend/data/medical-evals.sqlite3")
-    artifact_dir: Path = Path("backend/data/artifacts")
+    database_path: Path = project_root() / "backend/data/medical-evals.sqlite3"
+    artifact_dir: Path = project_root() / "backend/data/artifacts"
     fixed_admin_username: str = "admin"
     fixed_admin_password_hash: str = ""
     token_secret: str = "development-only-medical-evals-token-secret"
@@ -14,6 +16,14 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(env_prefix="MEDICAL_EVALS_", env_file=".env", extra="ignore")
+
+    def model_post_init(self, __context) -> None:
+        # Resolve relative env overrides from the repository root, not from
+        # whichever directory happened to launch API and Worker.
+        for field_name in ("database_path", "artifact_dir"):
+            value = getattr(self, field_name)
+            if not value.is_absolute():
+                setattr(self, field_name, project_root() / value)
 
 
 settings = Settings()

@@ -116,9 +116,10 @@ Judge 被要求只返回 JSON object：
 - `criteria_met` 不是布尔值；
 - `explanation` 不是字符串。
 
-Judge 调用失败或返回无法解析的 JSON 时，当前样本的该条 rubric 会记录为
-`criteria_met: false`，并在 explanation 中保留 `judge_error`。这会影响分数，
-因此必须同时查看运行记录中的 `rubric_results` 和错误字段，不能只看总分。
+Judge 调用失败或返回无法解析的 JSON 时，当前样本会记录为失败，并保留
+`error_stage: "judge"` 与规范化错误类别；不会把未完成的 rubric 判断伪装成
+`criteria_met: false`。因此必须同时查看运行记录中的 `rubric_judgments`（历史记录
+也可能使用 `rubric_results`）和错误字段，不能只看总分。
 
 ## 5. 评分公式
 
