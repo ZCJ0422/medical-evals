@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .paths import project_root
@@ -14,6 +15,7 @@ class Settings(BaseSettings):
     token_secret: str = "development-only-medical-evals-token-secret"
     encryption_secret: str = "development-only-medical-evals-encryption-secret"
     frontend_origin: str = "http://localhost:3000"
+    worker_lease_seconds: int = Field(default=300, ge=30, le=86400)
 
     model_config = SettingsConfigDict(env_prefix="MEDICAL_EVALS_", env_file=".env", extra="ignore")
 

@@ -214,6 +214,8 @@ Artifact 和 checkpoint，不会自动重复执行；管理员可通过 retry �
 领取时会原子绑定 Worker ownership 和过期时间，Worker 在进度更新时续租；租约过期后
 任务会失败，旧 Worker 不能再写入进度、结果或终态。该协议已经支持多个 Worker 共享
 SQLite 的基础互斥，但生产级多机部署仍应迁移到外部队列并补充租约压力测试。
+租约时长由 `MEDICAL_EVALS_WORKER_LEASE_SECONDS` 配置，允许根据模型请求最长耗时调整，
+取值范围为 30 秒至 24 小时。
 
 新增评测时建议遵循以下顺序：
 

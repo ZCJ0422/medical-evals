@@ -34,9 +34,9 @@ def main() -> None:
             repo.recover_expired_leases(
                 "Worker lease expired before the evaluation reached a terminal state; create a retry to run it again"
             )
-            task_id = queue.claim_next(worker_id)
+            task_id = queue.claim_next(worker_id, settings.worker_lease_seconds)
             if task_id:
-                try: Worker(repo, worker_id=worker_id).run_task(task_id)
+                try: Worker(repo, worker_id=worker_id, lease_seconds=settings.worker_lease_seconds).run_task(task_id)
                 except Exception as error: print(f"worker task {task_id} failed: {error}", flush=True)
             else:
                 time.sleep(1)

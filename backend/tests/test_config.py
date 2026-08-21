@@ -34,6 +34,14 @@ def test_storage_paths_are_rooted_at_the_repository() -> None:
     assert settings.artifact_dir.parts[-3:] == ("backend", "data", "custom-artifacts")
 
 
+def test_worker_lease_duration_is_configurable_with_safe_bounds() -> None:
+    assert Settings(worker_lease_seconds=600).worker_lease_seconds == 600
+    with pytest.raises(ValueError):
+        Settings(worker_lease_seconds=29)
+    with pytest.raises(ValueError):
+        Settings(worker_lease_seconds=86401)
+
+
 def test_api_startup_rejects_unsafe_production_defaults(monkeypatch) -> None:
     monkeypatch.setattr(config.settings, "environment", "production")
     monkeypatch.setattr(config.settings, "fixed_admin_password_hash", "")
