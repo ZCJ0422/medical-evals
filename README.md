@@ -105,9 +105,13 @@ npm install
 npm run dev
 ```
 
-To run real OpenAI-compatible evaluations, export the backend/Worker secrets
-before starting both processes. The UI stores only the environment-variable
-names, never the API key values:
+To run real OpenAI-compatible evaluations, configure the target and Judge
+credentials in the protected wizard. The API accepts those values only over
+the authenticated request, encrypts them with `MEDICAL_EVALS_ENCRYPTION_SECRET`
+before persisting the task, and decrypts them only inside the Worker. They are
+never returned by task APIs or written to metadata, reports, or logs. For
+headless CLI-style runs, provider credentials may instead be supplied through
+the environment before starting the Worker:
 
 ```bash
 export MEDICAL_EVALS_TARGET_API_KEY="sk-target..."

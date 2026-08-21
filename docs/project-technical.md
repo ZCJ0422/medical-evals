@@ -197,6 +197,10 @@ Workbench 逐题 Artifact 使用统一字段 `raw_output` 和 `rubric_judgments`
 历史 HealthBench 记录，同时保留 `predicted` 和 `rubric_results` 别名。运行中的
 结果页只在样本数量变化时刷新逐题列表，日志和聚合进度单独轮询。
 
+`GET /api/datasets` 返回每个受支持数据集版本及其 `rubric_id`。创建任务前的
+preflight 只接受 catalog 中登记的数据集和对应 rubric；前端直接使用该字段，避免
+新增数据集时前后端各自维护一套 rubric 映射。
+
 第一版按单机内网部署，不支持公开注册、团队角色、用户上传数据集、自定义 Rubric、
 多任务对比、审计日志或自动清理。
 
