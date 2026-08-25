@@ -237,8 +237,22 @@ mypy, frontend typechecking/build, and Playwright browser regression tests:
 ```bash
 uv run pytest -q
 cd backend && uv run pytest -q
-cd ../frontend && npm run typecheck && npm run build
+cd ../frontend && npm run build && npm run typecheck
+npm run test:e2e
 ```
+
+The Playwright suite starts the local API and frontend servers and verifies the
+login flow, evaluation creation, task list, result views, bilingual catalog,
+and HealthBench result rendering. On 2026-08-25, the `main` release baseline
+passed 95 root tests, 101 backend tests, frontend typechecking, production
+build, and all 10 Playwright tests. The browser suite requires an environment
+that permits local listeners on `127.0.0.1:3000` and `127.0.0.1:8000`.
+
+Next.js uses `.next-build` for production output. Run the production build
+before the standalone typecheck because the build generates the route type
+files consumed by TypeScript. The generated route types are included
+explicitly in `frontend/tsconfig.json` so a subsequent build does not modify
+tracked configuration files.
 
 The current published releases are [v3.0.1-baseline](https://github.com/ZCJ0422/medical-evals/releases/tag/v3.0.1-baseline),
 which records the remote baseline, and [v3.0.1-post1](https://github.com/ZCJ0422/medical-evals/releases/tag/v3.0.1-post1),

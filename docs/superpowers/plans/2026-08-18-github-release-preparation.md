@@ -43,5 +43,14 @@
 - Verify: backend tests, frontend typecheck/build, Git status
 
 - [x] Run backend tests from `backend/` with `PYTHONPATH=..:. .venv/bin/pytest -q`.
-- [x] Run `npm run typecheck` and `npm run build` from `frontend/`.
+- [x] Run `npm run build`, `npm run typecheck`, and `npm run test:e2e` from `frontend/`.
 - [x] Run `git diff --check`, review staged candidates, and report what remains intentionally untracked.
+
+### P0 release-gate verification — 2026-08-25
+
+- [x] Verify the `main` baseline in an isolated clean worktree.
+- [x] Root suite: 95 passed.
+- [x] Backend suite: 101 passed.
+- [x] Frontend typecheck and production build: passed.
+- [x] Playwright browser suite: 10 passed.
+- [x] Record the local-listener requirement for E2E (`127.0.0.1:3000` and `127.0.0.1:8000`).
