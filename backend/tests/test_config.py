@@ -6,16 +6,35 @@ from medical_evals_api.config import Settings, validate_runtime_security
 from medical_evals_api.main import app
 
 
-def test_production_rejects_development_credentials_and_secrets() -> None:
+@pytest.mark.parametrize(
+    "jwt_secret",
+    [
+        "development-only-medical-evals-token-secret",
+        "development-only-medical-evals-jwt-secret",
+    ],
+)
+def test_production_rejects_legacy_and_new_development_jwt_secrets(jwt_secret: str) -> None:
     settings = Settings(
         environment="production",
-        fixed_admin_password_hash="",
-        token_secret="development-only-medical-evals-token-secret",
-        encryption_secret="development-only-medical-evals-encryption-secret",
+        fixed_admin_password_hash="safe-password-hash",
+        jwt_secret=jwt_secret,
+        encryption_secret="safe-encryption-secret",
     )
 
-    with pytest.raises(RuntimeError, match="production configuration"):
+    with pytest.raises(RuntimeError, match="MEDICAL_EVALS_JWT_SECRET"):
         validate_runtime_security(settings)
+
+
+def test_production_accepts_non_default_jwt_secret() -> None:
+    settings = Settings(
+        environment="production",
+        fixed_admin_password_hash="safe-password-hash",
+        jwt_secret="safe-jwt-secret",
+        encryption_secret="safe-encryption-secret",
+    )
+
+    validate_runtime_security(settings)
+    assert settings.jwt_secret == "safe-jwt-secret"
 
 
 def test_development_keeps_local_defaults_usable() -> None:

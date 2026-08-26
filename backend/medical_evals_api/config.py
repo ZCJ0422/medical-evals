@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://localhost:3000"
     worker_lease_seconds: int = Field(default=300, ge=30, le=86400)
 
-    model_config = SettingsConfigDict(env_prefix="MEDICAL_EVALS_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="MEDICAL_EVALS_", env_file=".env", extra="ignore", populate_by_name=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -62,10 +62,14 @@ def validate_runtime_security(runtime_settings: Settings = settings) -> None:
     """Fail closed for production, while preserving the documented local setup."""
     if runtime_settings.environment.lower() not in {"production", "prod"}:
         return
+    unsafe_jwt_secrets = {
+        "development-only-medical-evals-jwt-secret",
+        "development-only-medical-evals-token-secret",
+    }
     unsafe = []
     if not runtime_settings.fixed_admin_password_hash:
         unsafe.append("MEDICAL_EVALS_FIXED_ADMIN_PASSWORD_HASH")
-    if runtime_settings.jwt_secret == "development-only-medical-evals-jwt-secret":
+    if runtime_settings.jwt_secret in unsafe_jwt_secrets:
         unsafe.append("MEDICAL_EVALS_JWT_SECRET")
     if runtime_settings.encryption_secret == "development-only-medical-evals-encryption-secret":
         unsafe.append("MEDICAL_EVALS_ENCRYPTION_SECRET")
