@@ -90,9 +90,9 @@ class LeaseLosingRepository:
         del task_id
         self.saved_results.append(payload)
 
-    def recover_expired_leases(self, error: str) -> int:
+    def recover_expired_leases(self, error: str) -> list[str]:
         del error
-        return 0
+        return []
 
     def recover_interrupted_tasks(self, error: str) -> int:
         del error
@@ -103,12 +103,14 @@ class LeaseLosingRepository:
 
 
 class ClaimedTaskRepository:
-    def __init__(self, task, artifact_root):
+    def __init__(self, task, artifact_root, expired_run_ids=None, queued_run_ids=None):
         self.task = task
         self.artifact_root = artifact_root
         self.claimed = []
-        self.recovered_expired = 0
+        self.recovered_expired = []
         self.recovered_interrupted = 0
+        self.expired_run_ids = list(expired_run_ids or [])
+        self.queued_run_ids = list(queued_run_ids or [])
 
     def get(self, task_id: str):
         return self.task if self.task.task_id == task_id else None
@@ -143,10 +145,10 @@ class ClaimedTaskRepository:
     def save_result(self, task_id, **payload):
         del task_id, payload
 
-    def recover_expired_leases(self, error: str) -> int:
+    def recover_expired_leases(self, error: str) -> list[str]:
         del error
-        self.recovered_expired += 1
-        return 0
+        self.recovered_expired.append(True)
+        return list(self.expired_run_ids)
 
     def recover_interrupted_tasks(self, error: str) -> int:
         del error
@@ -154,6 +156,8 @@ class ClaimedTaskRepository:
         return 0
 
     def list_queued_run_ids(self):
+        if self.queued_run_ids:
+            return list(self.queued_run_ids)
         if self.task.status == TaskStatus.QUEUED:
             return [self.task.task_id]
         return []
@@ -269,3 +273,39 @@ def test_worker_run_forever_reconciles_and_processes_queue_claim(tmp_path):
 
     assert queue.reconciled[0] == [task.task_id]
     assert queue.acked == [queue_claim]
+
+
+def test_worker_run_forever_requeues_expired_leases_via_reconciliation(tmp_path):
+    base_repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    expired = base_repo.create(
+        name="expired",
+        target_model_id="model",
+        judge_model_id="",
+        dataset_version_id="dataset-v1",
+        rubric_id="rubric-v1",
+    )
+    additional = base_repo.create(
+        name="queued",
+        target_model_id="model",
+        judge_model_id="",
+        dataset_version_id="dataset-v1",
+        rubric_id="rubric-v1",
+    )
+    queue = FakeQueue()
+
+    def repository_factory():
+        current = base_repo.get(expired.task_id)
+        assert current is not None
+        return ClaimedTaskRepository(
+            current,
+            tmp_path / "artifacts",
+            expired_run_ids=[expired.task_id],
+            queued_run_ids=[expired.task_id, additional.task_id],
+        )
+
+    worker = Worker(base_repo, adapter=DryRunEvaluationAdapter(), worker_id="worker-a", lease_seconds=60)
+
+    with pytest.raises(KeyboardInterrupt):
+        worker.run_forever(queue, repository_factory, idle_seconds=0)
+
+    assert queue.reconciled[0] == [expired.task_id, additional.task_id]

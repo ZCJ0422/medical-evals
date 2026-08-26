@@ -245,13 +245,14 @@ def test_sqlalchemy_worker_leases_enforce_ownership_and_recovery(client):
             .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
         )
         session.commit()
-        assert repository.recover_expired_leases("lease expired") == 1
+        assert repository.recover_expired_leases("lease expired") == [run_id]
         recovered = repository.get(run_id)
         assert recovered is not None
-        assert recovered.status == TaskStatus.FAILED
-        assert recovered.error == "lease expired"
+        assert recovered.status == TaskStatus.QUEUED
+        assert recovered.error is None
         assert recovered.lease_owner == ""
         assert recovered.lease_expires_at is None
+        assert run_id in repository.list_queued_run_ids()
         with pytest.raises(RuntimeError, match="Worker lease lost"):
             repository.update_progress(run_id, TaskProgress(stage="late write"), "worker-a")
         with pytest.raises(RuntimeError, match="Worker lease lost"):
@@ -377,10 +378,12 @@ def test_postgres_migration_and_worker_lease_integration():
                 .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
             )
             first_session.commit()
-            assert second_repository.recover_expired_leases("postgres lease expired") == 1
+            assert second_repository.recover_expired_leases("postgres lease expired") == ["pg-run"]
             recovered = second_repository.get("pg-run")
             assert recovered is not None
-            assert recovered.status == TaskStatus.FAILED
+            assert recovered.status == TaskStatus.QUEUED
+            assert recovered.error is None
+            assert "pg-run" in second_repository.list_queued_run_ids()
         finally:
             first_session.close()
             second_session.close()

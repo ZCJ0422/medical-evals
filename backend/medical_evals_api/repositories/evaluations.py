@@ -387,27 +387,42 @@ class EvaluationRepository:
         self.session.commit()
         return bool(updated.rowcount)
 
-    def recover_expired_leases(self, error: str) -> int:
+    def recover_expired_leases(self, error: str) -> list[str]:
+        del error
         now = _utcnow()
-        updated = self.session.execute(
+        expired_run_ids = [
+            str(row[0])
+            for row in self.session.execute(
+                select(evaluation_runs.c.id)
+                .where(
+                    evaluation_runs.c.status == TaskStatus.RUNNING.value,
+                    evaluation_runs.c.lease_owner.is_not(None),
+                    evaluation_runs.c.lease_expires_at.is_not(None),
+                    evaluation_runs.c.lease_expires_at <= now,
+                )
+                .order_by(evaluation_runs.c.created_at.asc(), evaluation_runs.c.id.asc())
+            ).all()
+        ]
+        if not expired_run_ids:
+            return []
+        self.session.execute(
             update(evaluation_runs)
             .where(
+                evaluation_runs.c.id.in_(expired_run_ids),
                 evaluation_runs.c.status == TaskStatus.RUNNING.value,
-                evaluation_runs.c.lease_owner.is_not(None),
-                evaluation_runs.c.lease_expires_at.is_not(None),
-                evaluation_runs.c.lease_expires_at <= now,
             )
             .values(
-                status=TaskStatus.FAILED.value,
-                error=error,
+                status=TaskStatus.QUEUED.value,
+                error=None,
                 lease_owner=None,
                 lease_expires_at=None,
-                finished_at=now,
+                queued_at=now,
+                finished_at=None,
                 updated_at=now,
             )
         )
         self.session.commit()
-        return int(updated.rowcount or 0)
+        return expired_run_ids
 
     def recover_interrupted_tasks(self, error: str) -> int:
         updated = self.session.execute(

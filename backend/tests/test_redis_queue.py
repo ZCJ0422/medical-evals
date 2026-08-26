@@ -237,6 +237,18 @@ def test_redis_queue_heartbeat_prevents_premature_reclaim():
     assert reclaimed.message_id == first.message_id
 
 
+def test_redis_queue_reconcile_reenqueues_recovered_run_ids():
+    redis_client = FakeRedis()
+    repository = FakeRepository()
+    queue = RedisTaskQueue(redis_client, repository=repository)
+
+    assert queue.reconcile(["run-1"]) == 1
+    claimed = queue.claim_next(worker_id="worker-a", lease_seconds=30, block_ms=0)
+
+    assert claimed is not None
+    assert claimed.run_id == "run-1"
+
+
 def test_local_task_queue_swallows_redis_outage_and_leaves_run_queued():
     class BrokenRedis:
         def xgroup_create(self, *args, **kwargs):

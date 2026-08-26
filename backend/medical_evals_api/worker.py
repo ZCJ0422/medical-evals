@@ -209,18 +209,19 @@ class Worker:
     ) -> None:
         repository = repository_factory()
         try:
-            repository.recover_expired_leases(
+            expired_run_ids = repository.recover_expired_leases(
                 "Worker lease expired before the evaluation reached a terminal state; create a retry to run it again"
             )
+            queued_run_ids: list[str] = list(expired_run_ids)
             if recover_interrupted:
                 repository.recover_interrupted_tasks(
                     "Worker stopped before the evaluation reached a terminal state; create a retry to run it again"
                 )
             list_queued = getattr(repository, "list_queued_run_ids", None)
             if list_queued is not None:
-                queued_run_ids = list_queued()
-                if queued_run_ids:
-                    queue.reconcile(queued_run_ids)
+                queued_run_ids.extend(list_queued())
+            if queued_run_ids:
+                queue.reconcile(list(dict.fromkeys(queued_run_ids)))
         finally:
             self._close_repository(repository)
 
