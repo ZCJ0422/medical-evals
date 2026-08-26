@@ -11,6 +11,7 @@ Implemented Task 5 for the backend worktree:
 - Added queue claim metadata, queue heartbeat, terminal ack, and queued-run reconciliation.
 - Added repository support for claiming a specific queued run and listing queued run ids for recovery.
 - Updated expired lease recovery so leased `running` runs are reset to `queued` and returned for Redis re-enqueue, preserving checkpoints for resume instead of marking them failed.
+- Tightened expired lease recovery to a single conditional transition that returns only rows actually reset, preventing a renewed lease from being requeued after candidate selection.
 - Moved the worker loop into `Worker.run_forever()` and wired the CLI worker command through Redis + PostgreSQL recovery.
 - Added focused queue and worker tests, including a live Redis integration test with explicit skip behavior when `MEDICAL_EVALS_TEST_REDIS_URL` is unavailable.
 
@@ -21,6 +22,7 @@ Implemented Task 5 for the backend worktree:
 - Route-side enqueue failures caused by Redis outages are swallowed intentionally so runs remain visible and recoverable as `queued`.
 - Worker startup and idle reconciliation re-enqueue queued PostgreSQL runs into Redis so a Redis outage does not orphan durable queued work.
 - Expired worker leases are treated as recoverable dispatch failures: the run returns to `queued`, lease fields are cleared, and the worker re-enqueues the recovered `run_id` through Redis Streams.
+- Lease recovery is atomic at update time: only rows still `running` with expired leases are reset and returned, closing the renewal-versus-recovery race.
 
 ## Files Changed
 
@@ -44,7 +46,7 @@ uv run pytest tests/test_redis_queue.py tests/test_worker.py tests/test_real_wor
 
 Result:
 
-- `32 passed`
+- `33 passed`
 - `2 skipped`
 
 Skip detail:

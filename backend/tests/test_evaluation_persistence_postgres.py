@@ -63,6 +63,35 @@ def _create_model_profile(client: TestClient, token: str, name: str) -> str:
     return response.json()["id"]
 
 
+class _RecoveryRaceSession:
+    def __init__(self, session, *, run_id: str):
+        self._session = session
+        self._run_id = run_id
+        self._triggered = False
+        self.renewed_expires_at = None
+
+    def execute(self, statement, *args, **kwargs):
+        from medical_evals_api.database import evaluation_runs
+
+        if (
+            not self._triggered
+            and getattr(statement, "__visit_name__", "") == "update"
+            and getattr(getattr(statement, "table", None), "name", "") == evaluation_runs.name
+        ):
+            self._triggered = True
+            future = datetime.now(timezone.utc) + timedelta(seconds=300)
+            self.renewed_expires_at = future
+            self._session.execute(
+                update(evaluation_runs)
+                .where(evaluation_runs.c.id == self._run_id)
+                .values(lease_expires_at=future, updated_at=future)
+            )
+        return self._session.execute(statement, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+
 def test_healthbench_requires_judge_profile(client):
     token = _issue_token(client, "alice")
     target_model_id = _create_model_profile(client, token, "Primary")
@@ -266,6 +295,56 @@ def test_sqlalchemy_worker_leases_enforce_ownership_and_recovery(client):
                 retry_count=0,
                 worker_id="worker-a",
             )
+    finally:
+        session.close()
+
+
+def test_recover_expired_leases_skips_rows_renewed_before_conditional_update(client):
+    from medical_evals_api.database import evaluation_runs, get_session
+    from medical_evals_api.repositories.evaluations import EvaluationRepository
+    from medical_evals_api.schemas.common import TaskStatus
+
+    token = _issue_token(client, "lease-race-user")
+    target_model_id = _create_model_profile(client, token, "Lease Race Target")
+    created = client.post(
+        "/api/v1/evaluations",
+        headers=_auth(token),
+        json={
+            "evaluation_definition_id": "medqa",
+            "target_model_id": target_model_id,
+            "split": "dev",
+            "sample_limit": 1,
+        },
+    )
+    assert created.status_code == 201
+    run_id = created.json()["run_id"]
+
+    session = next(get_session())
+    try:
+        repository = EvaluationRepository(session)
+        claimed = repository.claim_next("worker-a", lease_seconds=60)
+        assert claimed is not None
+        session.execute(
+            update(evaluation_runs)
+            .where(evaluation_runs.c.id == run_id)
+            .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+        )
+        session.commit()
+
+        race_session = _RecoveryRaceSession(session, run_id=run_id)
+        repository.session = race_session
+        recovered_ids = repository.recover_expired_leases("lease expired")
+
+        assert recovered_ids == []
+        recovered = repository.get(run_id)
+        assert recovered is not None
+        assert recovered.status == TaskStatus.RUNNING
+        assert recovered.lease_owner == "worker-a"
+        assert recovered.lease_expires_at is not None
+        assert race_session.renewed_expires_at is not None
+        assert recovered.lease_expires_at.isoformat().startswith(
+            race_session.renewed_expires_at.replace(tzinfo=None).isoformat(timespec="seconds")
+        )
     finally:
         session.close()
 

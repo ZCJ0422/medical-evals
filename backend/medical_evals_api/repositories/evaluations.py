@@ -390,26 +390,13 @@ class EvaluationRepository:
     def recover_expired_leases(self, error: str) -> list[str]:
         del error
         now = _utcnow()
-        expired_run_ids = [
-            str(row[0])
-            for row in self.session.execute(
-                select(evaluation_runs.c.id)
-                .where(
-                    evaluation_runs.c.status == TaskStatus.RUNNING.value,
-                    evaluation_runs.c.lease_owner.is_not(None),
-                    evaluation_runs.c.lease_expires_at.is_not(None),
-                    evaluation_runs.c.lease_expires_at <= now,
-                )
-                .order_by(evaluation_runs.c.created_at.asc(), evaluation_runs.c.id.asc())
-            ).all()
-        ]
-        if not expired_run_ids:
-            return []
-        self.session.execute(
+        recovered_rows = self.session.execute(
             update(evaluation_runs)
             .where(
-                evaluation_runs.c.id.in_(expired_run_ids),
                 evaluation_runs.c.status == TaskStatus.RUNNING.value,
+                evaluation_runs.c.lease_owner.is_not(None),
+                evaluation_runs.c.lease_expires_at.is_not(None),
+                evaluation_runs.c.lease_expires_at <= now,
             )
             .values(
                 status=TaskStatus.QUEUED.value,
@@ -420,9 +407,11 @@ class EvaluationRepository:
                 finished_at=None,
                 updated_at=now,
             )
+            .returning(evaluation_runs.c.id)
         )
+        recovered_run_ids = sorted(str(row[0]) for row in recovered_rows.all())
         self.session.commit()
-        return expired_run_ids
+        return recovered_run_ids
 
     def recover_interrupted_tasks(self, error: str) -> int:
         updated = self.session.execute(
