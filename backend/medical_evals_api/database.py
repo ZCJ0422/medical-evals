@@ -1,13 +1,14 @@
 from collections.abc import Iterator
 from functools import lru_cache
 
+from fastapi import Depends
 import redis
 from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, Integer, MetaData, Numeric, String, Table, Text, UniqueConstraint, create_engine, func
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from .config import Settings
+from .config import Settings, settings
 
 
 NAMING_CONVENTION = {
@@ -177,8 +178,12 @@ def get_engine(runtime_settings: Settings | None = None) -> Engine:
     return _build_engine((runtime_settings or Settings()).database_url)
 
 
-def get_session(runtime_settings: Settings | None = None) -> Iterator[Session]:
-    session = _build_session_factory((runtime_settings or Settings()).database_url)()
+def get_runtime_settings() -> Settings:
+    return settings
+
+
+def get_session(runtime_settings: Settings = Depends(get_runtime_settings)) -> Iterator[Session]:
+    session = _build_session_factory(runtime_settings.database_url)()
     try:
         yield session
     finally:
