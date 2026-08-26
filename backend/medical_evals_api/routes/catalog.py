@@ -24,7 +24,7 @@ def list_datasets(_: AdminIdentity = Depends(require_admin)) -> list[DatasetVers
     return DATASETS
 
 
-@v1_router.get("/datasets", response_model=list[EvaluationDefinitionResponse], include_in_schema=False)
+@v1_router.get("/datasets", response_model=list[EvaluationDefinitionResponse])
 def list_datasets_v1(
     _: CurrentUser,
     session: Session = Depends(get_session),

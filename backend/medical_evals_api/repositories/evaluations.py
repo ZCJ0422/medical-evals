@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -175,6 +175,8 @@ class EvaluationRepository:
             target_api_key_enc=self._secret_for_profile(row["target_model_profile_id"]),
             judge_base_url=judge_snapshot["base_url"] if judge_snapshot else "",
             judge_api_key_enc=self._secret_for_profile(row["judge_model_profile_id"]),
+            lease_owner=row["lease_owner"] or "",
+            lease_expires_at=row["lease_expires_at"],
         )
 
     def create(self, user_id: str, command: EvaluationCreateCommand) -> EvaluationRun:
@@ -218,6 +220,8 @@ class EvaluationRepository:
                 config_json=merged_config,
                 progress_json=progress,
                 error=None,
+                lease_owner=None,
+                lease_expires_at=None,
                 queued_at=now,
                 started_at=None,
                 finished_at=None,
@@ -294,16 +298,18 @@ class EvaluationRepository:
         return [self._build_run(row) for row in rows]
 
     def claim_next(self, worker_id: str = "", lease_seconds: int = 300) -> EvaluationRun | None:
-        del worker_id, lease_seconds
+        now = _utcnow()
+        lease_owner = worker_id or None
+        lease_expires_at = now + timedelta(seconds=lease_seconds) if lease_owner else None
         row = self.session.execute(
             select(evaluation_runs)
             .where(evaluation_runs.c.status == TaskStatus.QUEUED.value)
             .order_by(evaluation_runs.c.created_at.asc(), evaluation_runs.c.id.asc())
             .limit(1)
+            .with_for_update(skip_locked=True)
         ).mappings().first()
         if row is None:
             return None
-        now = _utcnow()
         updated = self.session.execute(
             update(evaluation_runs)
             .where(
@@ -313,6 +319,8 @@ class EvaluationRepository:
             .values(
                 status=TaskStatus.RUNNING.value,
                 started_at=row["started_at"] or now,
+                lease_owner=lease_owner,
+                lease_expires_at=lease_expires_at,
                 updated_at=now,
             )
         )
@@ -322,29 +330,60 @@ class EvaluationRepository:
         return self.get(row["id"])
 
     def renew_lease(self, task_id: str, worker_id: str, lease_seconds: int = 300) -> bool:
-        del worker_id, lease_seconds
+        if not worker_id:
+            return False
+        now = _utcnow()
         updated = self.session.execute(
             update(evaluation_runs)
             .where(
                 evaluation_runs.c.id == task_id,
                 evaluation_runs.c.status == TaskStatus.RUNNING.value,
+                evaluation_runs.c.lease_owner == worker_id,
+                evaluation_runs.c.lease_expires_at > now,
             )
-            .values(updated_at=_utcnow())
+            .values(
+                lease_expires_at=now + timedelta(seconds=lease_seconds),
+                updated_at=now,
+            )
         )
         self.session.commit()
         return bool(updated.rowcount)
 
     def recover_expired_leases(self, error: str) -> int:
-        del error
-        return 0
+        now = _utcnow()
+        updated = self.session.execute(
+            update(evaluation_runs)
+            .where(
+                evaluation_runs.c.status == TaskStatus.RUNNING.value,
+                evaluation_runs.c.lease_owner.is_not(None),
+                evaluation_runs.c.lease_expires_at.is_not(None),
+                evaluation_runs.c.lease_expires_at <= now,
+            )
+            .values(
+                status=TaskStatus.FAILED.value,
+                error=error,
+                lease_owner=None,
+                lease_expires_at=None,
+                finished_at=now,
+                updated_at=now,
+            )
+        )
+        self.session.commit()
+        return int(updated.rowcount or 0)
 
     def recover_interrupted_tasks(self, error: str) -> int:
         updated = self.session.execute(
             update(evaluation_runs)
-            .where(evaluation_runs.c.status == TaskStatus.RUNNING.value)
+            .where(
+                evaluation_runs.c.status == TaskStatus.RUNNING.value,
+                (evaluation_runs.c.lease_owner.is_(None))
+                | (evaluation_runs.c.lease_owner == ""),
+            )
             .values(
                 status=TaskStatus.FAILED.value,
                 error=error,
+                lease_owner=None,
+                lease_expires_at=None,
                 finished_at=_utcnow(),
                 updated_at=_utcnow(),
             )
@@ -353,13 +392,24 @@ class EvaluationRepository:
         return int(updated.rowcount or 0)
 
     def update_progress(self, task_id: str, progress: TaskProgress, worker_id: str = "") -> EvaluationRun:
-        del worker_id
-        self.session.execute(
-            update(evaluation_runs)
-            .where(evaluation_runs.c.id == task_id)
-            .values(progress_json=progress.model_dump(mode="json"), updated_at=_utcnow())
+        now = _utcnow()
+        stmt = update(evaluation_runs).where(evaluation_runs.c.id == task_id)
+        if worker_id:
+            stmt = stmt.where(
+                evaluation_runs.c.status == TaskStatus.RUNNING.value,
+                evaluation_runs.c.lease_owner == worker_id,
+                evaluation_runs.c.lease_expires_at > now,
+            )
+        updated = self.session.execute(
+            stmt.values(progress_json=progress.model_dump(mode="json"), updated_at=now)
         )
         self.session.commit()
+        if worker_id and not updated.rowcount:
+            if self.session.execute(
+                select(evaluation_runs.c.id).where(evaluation_runs.c.id == task_id)
+            ).first() is None:
+                raise KeyError(task_id)
+            raise RuntimeError("Worker lease lost while updating task progress")
         run = self.get(task_id)
         if run is None:
             raise KeyError(task_id)
@@ -370,7 +420,10 @@ class EvaluationRepository:
         if status == TaskStatus.RUNNING:
             values["started_at"] = _utcnow()
             values["finished_at"] = None
-        elif status in {
+        else:
+            values["lease_owner"] = None
+            values["lease_expires_at"] = None
+        if status in {
             TaskStatus.COMPLETED,
             TaskStatus.PARTIAL_FAILED,
             TaskStatus.FAILED,
@@ -393,28 +446,39 @@ class EvaluationRepository:
         error: str | None = None,
         worker_id: str = "",
     ) -> EvaluationRun:
-        del worker_id
-        values = {"status": status.value, "error": error, "updated_at": _utcnow()}
+        now = _utcnow()
+        values = {
+            "status": status.value,
+            "error": error,
+            "updated_at": now,
+            "lease_owner": None,
+            "lease_expires_at": None,
+        }
         if status in {
             TaskStatus.COMPLETED,
             TaskStatus.PARTIAL_FAILED,
             TaskStatus.FAILED,
             TaskStatus.CANCELLED,
         }:
-            values["finished_at"] = _utcnow()
-        updated = self.session.execute(
-            update(evaluation_runs)
-            .where(
-                evaluation_runs.c.id == task_id,
-                evaluation_runs.c.status != TaskStatus.CANCELLED.value,
-            )
-            .values(**values)
+            values["finished_at"] = now
+        stmt = update(evaluation_runs).where(
+            evaluation_runs.c.id == task_id,
+            evaluation_runs.c.status != TaskStatus.CANCELLED.value,
         )
+        if worker_id:
+            stmt = stmt.where(
+                evaluation_runs.c.status == TaskStatus.RUNNING.value,
+                evaluation_runs.c.lease_owner == worker_id,
+                evaluation_runs.c.lease_expires_at > now,
+            )
+        updated = self.session.execute(stmt.values(**values))
         self.session.commit()
         if not updated.rowcount:
             run = self.get(task_id)
             if run is None:
                 raise KeyError(task_id)
+            if worker_id and run.status != TaskStatus.CANCELLED:
+                raise RuntimeError("Worker lease lost while updating task status")
             return run
         run = self.get(task_id)
         if run is None:
@@ -437,9 +501,24 @@ class EvaluationRepository:
         parse_failed_count: int = 0,
         worker_id: str = "",
     ) -> None:
-        del worker_id
         result_id = str(uuid4())
         now = _utcnow()
+        run_stmt = select(evaluation_runs.c.id).where(evaluation_runs.c.id == task_id)
+        if worker_id:
+            run_stmt = run_stmt.where(
+                evaluation_runs.c.status == TaskStatus.RUNNING.value,
+                evaluation_runs.c.lease_owner == worker_id,
+                evaluation_runs.c.lease_expires_at > now,
+            )
+        run_row = self.session.execute(run_stmt.with_for_update()).first()
+        if run_row is None:
+            exists = self.session.execute(
+                select(evaluation_runs.c.id).where(evaluation_runs.c.id == task_id)
+            ).first()
+            if exists is None:
+                raise KeyError(task_id)
+            if worker_id:
+                raise RuntimeError("Worker lease lost while saving task result")
         existing = self.session.execute(
             select(evaluation_results.c.id).where(evaluation_results.c.run_id == task_id)
         ).first()

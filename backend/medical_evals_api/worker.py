@@ -92,7 +92,8 @@ class Worker:
                 else:
                     artifacts.log(f"[sample {int(sample.get('index', 0)) + 1}] record persisted")
             self.adapter.on_sample = record_sample
-        self.repository.set_status(task_id, TaskStatus.RUNNING)
+        if task.status == TaskStatus.QUEUED:
+            self.repository.set_status(task_id, TaskStatus.RUNNING)
         update_stage("preparing")
         def is_task_cancelled() -> bool:
             current_task = self.repository.get(task_id)

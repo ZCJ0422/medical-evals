@@ -6,7 +6,7 @@ import time
 from sqlalchemy.orm import sessionmaker
 
 from .config import settings, validate_runtime_security
-from .database import get_engine, metadata
+from .database import get_engine, upgrade_database
 from .repositories.evaluations import EvaluationRepository
 from .queue import LocalTaskQueue, TaskQueue
 from .worker import Worker
@@ -17,15 +17,16 @@ def main() -> None:
     parser.add_argument("command", choices=["api", "worker", "init-db"])
     args = parser.parse_args()
     validate_runtime_security()
-    engine = get_engine(settings)
     if args.command == "init-db":
-        metadata.create_all(engine, checkfirst=True)
+        upgrade_database(settings)
+        engine = get_engine(settings)
         session = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)()
         try:
             EvaluationRepository(session, settings.artifact_dir)
         finally:
             session.close()
         return
+    engine = get_engine(settings)
     if args.command == "worker":
         worker_id = uuid.uuid4().hex
         session_factory = sessionmaker(

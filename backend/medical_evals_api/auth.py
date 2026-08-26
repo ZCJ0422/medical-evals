@@ -120,21 +120,6 @@ def require_user(request: Request, session: Session = Depends(get_session)) -> U
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     claims = _decode_access_token(token)
-    if (
-        claims["user_id"] is None
-        and claims["username"] == settings.fixed_admin_username
-        and claims["role"] == "admin"
-    ):
-        now = datetime.now(timezone.utc)
-        return User(
-            id="fixed-admin",
-            username=settings.fixed_admin_username,
-            password_hash="",
-            role="admin",
-            status="active",
-            created_at=now,
-            updated_at=now,
-        )
     repository = UserRepository(session)
     user = repository.get_by_id(claims["user_id"]) if claims["user_id"] else repository.get_by_username(claims["username"])
     if user is None:
@@ -145,6 +130,25 @@ def require_user(request: Request, session: Session = Depends(get_session)) -> U
 
 
 def require_admin(request: Request, session: Session = Depends(get_session)) -> User:
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() == "bearer" and token:
+        claims = _decode_access_token(token)
+        if (
+            claims["user_id"] is None
+            and claims["username"] == settings.fixed_admin_username
+            and claims["role"] == "admin"
+        ):
+            now = datetime.now(timezone.utc)
+            return User(
+                id="legacy-fixed-admin",
+                username=settings.fixed_admin_username,
+                password_hash="",
+                role="admin",
+                status="active",
+                created_at=now,
+                updated_at=now,
+            )
     user = require_user(request, session)
     if user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access required")

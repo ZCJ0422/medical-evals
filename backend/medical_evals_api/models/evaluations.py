@@ -70,9 +70,8 @@ class EvaluationRun:
     judge_api_key_env: str = ""
     judge_api_key_enc: str = ""
     lease_owner: str = ""
-    lease_expires_at: str = ""
+    lease_expires_at: datetime | None = None
 
     @property
     def task_id(self) -> str:
         return self.run_id
-

@@ -214,7 +214,7 @@ def delete_evaluation(task_id: str, _: AdminIdentity = Depends(require_admin)) -
         shutil.rmtree(artifact_dir)
 
 
-@v1_router.get("", response_model=list[EvaluationRunResponse], include_in_schema=False)
+@v1_router.get("", response_model=list[EvaluationRunResponse])
 def list_evaluations_v1(
     user: CurrentUser,
     session: Session = Depends(get_session),
@@ -223,7 +223,7 @@ def list_evaluations_v1(
     return [_run_response(run) for run in repo.list_owned(user.id)]
 
 
-@v1_router.post("", response_model=EvaluationRunResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+@v1_router.post("", response_model=EvaluationRunResponse, status_code=status.HTTP_201_CREATED)
 def create_evaluation_v1(
     payload: EvaluationRunCreate,
     user: CurrentUser,
@@ -259,7 +259,7 @@ def create_evaluation_v1(
     return _run_response(run)
 
 
-@v1_router.get("/{run_id}", response_model=EvaluationRunResponse, include_in_schema=False)
+@v1_router.get("/{run_id}", response_model=EvaluationRunResponse)
 def get_evaluation_v1(
     run_id: str,
     user: CurrentUser,
@@ -271,7 +271,7 @@ def get_evaluation_v1(
     return _run_response(run)
 
 
-@v1_router.post("/{run_id}/cancel", response_model=EvaluationRunResponse, include_in_schema=False)
+@v1_router.post("/{run_id}/cancel", response_model=EvaluationRunResponse)
 def cancel_evaluation_v1(
     run_id: str,
     user: CurrentUser,
@@ -286,7 +286,7 @@ def cancel_evaluation_v1(
     return _run_response(repo.set_status(run_id, TaskStatus.CANCELLED))
 
 
-@v1_router.post("/{run_id}/retry", response_model=EvaluationRunResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+@v1_router.post("/{run_id}/retry", response_model=EvaluationRunResponse, status_code=status.HTTP_201_CREATED)
 def retry_evaluation_v1(
     run_id: str,
     user: CurrentUser,
@@ -317,7 +317,7 @@ def retry_evaluation_v1(
     return _run_response(retried)
 
 
-@v1_router.post("/{run_id}/resume", response_model=EvaluationRunResponse, include_in_schema=False)
+@v1_router.post("/{run_id}/resume", response_model=EvaluationRunResponse)
 def resume_evaluation_v1(
     run_id: str,
     user: CurrentUser,
@@ -338,7 +338,7 @@ def resume_evaluation_v1(
     return _run_response(resumed)
 
 
-@v1_router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
+@v1_router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_evaluation_v1(
     run_id: str,
     user: CurrentUser,

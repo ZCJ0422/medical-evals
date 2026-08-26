@@ -72,7 +72,7 @@ def register(payload: UserCredentials, session: Session = Depends(get_session)) 
     return _register(payload, session)
 
 
-@v1_router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+@v1_router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register_v1(payload: UserCredentials, session: Session = Depends(get_session)) -> TokenResponse:
     return _register(payload, session)
 
@@ -82,7 +82,7 @@ def login(payload: UserCredentials, session: Session = Depends(get_session)) -> 
     return _login(payload, session)
 
 
-@v1_router.post("/login", response_model=TokenResponse, include_in_schema=False)
+@v1_router.post("/login", response_model=TokenResponse)
 def login_v1(payload: UserCredentials, session: Session = Depends(get_session)) -> TokenResponse:
     return _login(payload, session)
 
@@ -92,7 +92,7 @@ def refresh(payload: RefreshTokenRequest, session: Session = Depends(get_session
     return _refresh(payload, session)
 
 
-@v1_router.post("/refresh", response_model=TokenResponse, include_in_schema=False)
+@v1_router.post("/refresh", response_model=TokenResponse)
 def refresh_v1(payload: RefreshTokenRequest, session: Session = Depends(get_session)) -> TokenResponse:
     return _refresh(payload, session)
 
@@ -102,7 +102,7 @@ def logout(payload: RefreshTokenRequest, session: Session = Depends(get_session)
     return _logout(payload, session)
 
 
-@v1_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
+@v1_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout_v1(payload: RefreshTokenRequest, session: Session = Depends(get_session)) -> Response:
     return _logout(payload, session)
 
@@ -112,4 +112,4 @@ def me(user: CurrentUser) -> UserResponse:
 
 
 me_router.add_api_route("/me", me, methods=["GET"], response_model=UserResponse)
-v1_me_router.add_api_route("/me", me, methods=["GET"], response_model=UserResponse, include_in_schema=False)
+v1_me_router.add_api_route("/me", me, methods=["GET"], response_model=UserResponse)

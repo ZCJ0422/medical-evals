@@ -25,6 +25,7 @@ test = ["httpx>=0.27,<1", "pytest>=8,<9"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["postgres: requires MEDICAL_EVALS_TEST_POSTGRES_URL and a disposable PostgreSQL database"]
 
 [tool.setuptools.packages.find]
 include = ["medical_evals_api*"]

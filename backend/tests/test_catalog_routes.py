@@ -62,3 +62,14 @@ def test_catalog_lists_only_builtin_definitions_without_raw_content(client):
         "consensus",
     ]
     assert all("prompt" not in item and "rubrics" not in item for item in payload)
+
+
+def test_v1_routes_remain_visible_in_openapi(client):
+    paths = client.get("/openapi.json").json()["paths"]
+
+    assert "/api/v1/auth/register" in paths
+    assert "/api/v1/me" in paths
+    assert "/api/v1/models" in paths
+    assert "/api/v1/datasets" in paths
+    assert "/api/v1/evaluations" in paths
+    assert "/api/v1/evaluations/{run_id}" in paths

@@ -1,4 +1,9 @@
 import pytest
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from medical_evals_api.config import Settings
@@ -52,3 +57,56 @@ def test_metadata_declares_initial_workbench_tables() -> None:
         "evaluation_results",
         "evaluation_sample_results",
     } <= set(metadata.tables)
+
+
+def test_alembic_upgrades_existing_evaluation_runs_with_non_null_names(tmp_path) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'migration.sqlite3'}"
+    backend_root = Path(__file__).resolve().parents[1]
+    alembic_config = Config(str(backend_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(backend_root / "alembic"))
+    alembic_config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(alembic_config, "0001_initial_workbench")
+
+    engine = create_engine(database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users (id, username, password_hash) "
+                "VALUES ('user-1', 'migration-user', 'hash')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO model_profiles "
+                "(id, user_id, name, base_url, model_name, api_key_encrypted) "
+                "VALUES ('profile-1', 'user-1', 'Target', 'https://example.test/v1', "
+                "'target-model', 'encrypted')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO evaluation_definitions "
+                "(id, name, kind, dataset_version, default_config_json) "
+                "VALUES ('medqa', 'MedQA', 'medical-medqa', 'medical-medqa.dev.v1', '{}')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO evaluation_runs "
+                "(id, user_id, evaluation_definition_id, target_model_profile_id, status, split, "
+                "config_json, progress_json) VALUES "
+                "('run-1', 'user-1', 'medqa', 'profile-1', 'queued', 'dev', '{}', '{}')"
+            )
+        )
+
+    command.upgrade(alembic_config, "head")
+
+    columns = {column["name"]: column for column in inspect(engine).get_columns("evaluation_runs")}
+    with engine.connect() as connection:
+        migrated_name = connection.execute(
+            text("SELECT name FROM evaluation_runs WHERE id = 'run-1'")
+        ).scalar_one()
+
+    assert columns["name"]["nullable"] is False
+    assert {"lease_owner", "lease_expires_at"} <= columns.keys()
+    assert migrated_name == "Evaluation run-1"

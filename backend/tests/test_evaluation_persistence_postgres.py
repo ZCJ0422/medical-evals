@@ -1,5 +1,15 @@
+import os
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from uuid import uuid4
+
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, inspect, text, update
+from sqlalchemy.engine import make_url
+from sqlalchemy.orm import sessionmaker
 
 from medical_evals_api.main import app
 
@@ -150,3 +160,232 @@ def test_cross_user_evaluation_run_access_is_rejected(client):
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Evaluation run not found"}
+
+
+def test_legacy_fixed_admin_token_uses_persisted_user_for_v1_resources(client):
+    from medical_evals_api.auth import create_access_token
+    from medical_evals_api.config import settings
+    from medical_evals_api.database import evaluation_runs, get_session, model_profiles, users
+
+    token = create_access_token(settings.fixed_admin_username)
+    model_id = _create_model_profile(client, token, "Legacy Admin Target")
+    created = client.post(
+        "/api/v1/evaluations",
+        headers=_auth(token),
+        json={
+            "evaluation_definition_id": "medqa",
+            "target_model_id": model_id,
+            "split": "dev",
+            "sample_limit": 1,
+        },
+    )
+
+    assert created.status_code == 201
+    session = next(get_session())
+    try:
+        admin_id = session.execute(
+            users.select()
+            .with_only_columns(users.c.id)
+            .where(users.c.username == settings.fixed_admin_username)
+        ).scalar_one()
+        profile_user_id = session.execute(
+            model_profiles.select()
+            .with_only_columns(model_profiles.c.user_id)
+            .where(model_profiles.c.id == model_id)
+        ).scalar_one()
+        run_user_id = session.execute(
+            evaluation_runs.select()
+            .with_only_columns(evaluation_runs.c.user_id)
+            .where(evaluation_runs.c.id == created.json()["run_id"])
+        ).scalar_one()
+    finally:
+        session.close()
+
+    assert admin_id != "fixed-admin"
+    assert profile_user_id == admin_id
+    assert run_user_id == admin_id
+
+
+def test_sqlalchemy_worker_leases_enforce_ownership_and_recovery(client):
+    from medical_evals_api.database import evaluation_runs, get_session
+    from medical_evals_api.repositories.evaluations import EvaluationRepository
+    from medical_evals_api.schemas.common import TaskProgress, TaskStatus
+
+    token = _issue_token(client, "lease-user")
+    target_model_id = _create_model_profile(client, token, "Lease Target")
+    created = client.post(
+        "/api/v1/evaluations",
+        headers=_auth(token),
+        json={
+            "evaluation_definition_id": "medqa",
+            "target_model_id": target_model_id,
+            "split": "dev",
+            "sample_limit": 1,
+        },
+    )
+    assert created.status_code == 201
+    run_id = created.json()["run_id"]
+
+    session = next(get_session())
+    try:
+        repository = EvaluationRepository(session)
+        claimed = repository.claim_next("worker-a", lease_seconds=60)
+        assert claimed is not None
+        assert claimed.run_id == run_id
+        assert claimed.status == TaskStatus.RUNNING
+        assert claimed.lease_owner == "worker-a"
+        assert isinstance(claimed.lease_expires_at, datetime)
+        assert not repository.renew_lease(run_id, "worker-b", lease_seconds=60)
+        assert repository.renew_lease(run_id, "worker-a", lease_seconds=60)
+        assert repository.recover_interrupted_tasks("startup recovery") == 0
+
+        session.execute(
+            update(evaluation_runs)
+            .where(evaluation_runs.c.id == run_id)
+            .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+        )
+        session.commit()
+        assert repository.recover_expired_leases("lease expired") == 1
+        recovered = repository.get(run_id)
+        assert recovered is not None
+        assert recovered.status == TaskStatus.FAILED
+        assert recovered.error == "lease expired"
+        assert recovered.lease_owner == ""
+        assert recovered.lease_expires_at is None
+        with pytest.raises(RuntimeError, match="Worker lease lost"):
+            repository.update_progress(run_id, TaskProgress(stage="late write"), "worker-a")
+        with pytest.raises(RuntimeError, match="Worker lease lost"):
+            repository.save_result(
+                run_id,
+                total_score=1.0,
+                dimension_scores={},
+                error_categories={},
+                completed_count=1,
+                failed_count=0,
+                retry_count=0,
+                worker_id="worker-a",
+            )
+    finally:
+        session.close()
+
+
+def _alembic_config(database_url: str) -> Config:
+    backend_root = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_root / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_root / "alembic"))
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+    return config
+
+
+@pytest.mark.postgres
+def test_postgres_migration_and_worker_lease_integration():
+    database_url = os.getenv("MEDICAL_EVALS_TEST_POSTGRES_URL")
+    if not database_url:
+        pytest.skip(
+            "PostgreSQL integration unavailable: set MEDICAL_EVALS_TEST_POSTGRES_URL "
+            "to a disposable PostgreSQL database"
+        )
+
+    schema_name = f"medical_evals_test_{uuid4().hex}"
+    base_engine = create_engine(database_url)
+    scoped_url = make_url(database_url).update_query_dict(
+        {"options": f"-csearch_path={schema_name}"}
+    )
+    scoped_database_url = scoped_url.render_as_string(hide_password=False)
+    with base_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.exec_driver_sql(f'CREATE SCHEMA "{schema_name}"')
+
+    scoped_engine = create_engine(scoped_database_url)
+    try:
+        config = _alembic_config(scoped_database_url)
+        command.upgrade(config, "0001_initial_workbench")
+        with scoped_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO users (id, username, password_hash) "
+                    "VALUES ('pg-user', 'pg-user', 'hash')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO model_profiles "
+                    "(id, user_id, name, base_url, model_name, api_key_encrypted) "
+                    "VALUES ('pg-profile', 'pg-user', 'Target', 'https://example.test/v1', "
+                    "'target-model', 'encrypted')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO evaluation_definitions "
+                    "(id, name, kind, dataset_version, default_config_json) "
+                    "VALUES ('medqa', 'MedQA', 'medical-medqa', 'medical-medqa.dev.v1', '{}')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO evaluation_runs "
+                    "(id, user_id, evaluation_definition_id, target_model_profile_id, status, split, "
+                    "config_json, progress_json) VALUES "
+                    "('pg-run', 'pg-user', 'medqa', 'pg-profile', 'queued', 'dev', '{}', '{}')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO run_model_snapshots "
+                    "(id, run_id, profile_role, source_model_profile_id, display_name, base_url, "
+                    "model_name, api_key_encrypted) VALUES "
+                    "('pg-snapshot', 'pg-run', 'target', 'pg-profile', 'Target', "
+                    "'https://example.test/v1', 'target-model', '')"
+                )
+            )
+
+        command.upgrade(config, "head")
+        columns = {
+            column["name"]: column
+            for column in inspect(scoped_engine).get_columns("evaluation_runs")
+        }
+        assert columns["name"]["nullable"] is False
+        assert {"lease_owner", "lease_expires_at"} <= columns.keys()
+
+        session_factory = sessionmaker(
+            bind=scoped_engine,
+            autoflush=False,
+            autocommit=False,
+            expire_on_commit=False,
+        )
+        from medical_evals_api.database import evaluation_runs
+        from medical_evals_api.repositories.evaluations import EvaluationRepository
+        from medical_evals_api.schemas.common import TaskStatus
+
+        first_session = session_factory()
+        second_session = session_factory()
+        try:
+            first_repository = EvaluationRepository(first_session)
+            second_repository = EvaluationRepository(second_session)
+            claimed = first_repository.claim_next("postgres-worker", lease_seconds=60)
+            assert claimed is not None
+            assert claimed.run_id == "pg-run"
+            assert claimed.name == "Evaluation pg-run"
+            assert claimed.lease_owner == "postgres-worker"
+            assert second_repository.claim_next("other-worker", lease_seconds=60) is None
+            assert not second_repository.renew_lease("pg-run", "other-worker", lease_seconds=60)
+            assert first_repository.renew_lease("pg-run", "postgres-worker", lease_seconds=60)
+
+            first_session.execute(
+                update(evaluation_runs)
+                .where(evaluation_runs.c.id == "pg-run")
+                .values(lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+            )
+            first_session.commit()
+            assert second_repository.recover_expired_leases("postgres lease expired") == 1
+            recovered = second_repository.get("pg-run")
+            assert recovered is not None
+            assert recovered.status == TaskStatus.FAILED
+        finally:
+            first_session.close()
+            second_session.close()
+    finally:
+        scoped_engine.dispose()
+        with base_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            connection.exec_driver_sql(f'DROP SCHEMA "{schema_name}" CASCADE')
+        base_engine.dispose()

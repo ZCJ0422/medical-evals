@@ -1,7 +1,10 @@
 from collections.abc import Iterator
 from functools import lru_cache
 import os
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from fastapi import Depends
 import redis
 from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, Integer, MetaData, Numeric, String, Table, Text, UniqueConstraint, create_engine, func
@@ -93,6 +96,8 @@ evaluation_runs = Table(
     Column("config_json", JSON, nullable=False),
     Column("progress_json", JSON, nullable=False),
     Column("error", Text),
+    Column("lease_owner", String(255)),
+    Column("lease_expires_at", DateTime(timezone=True)),
     Column("queued_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("started_at", DateTime(timezone=True)),
     Column("finished_at", DateTime(timezone=True)),
@@ -100,6 +105,7 @@ evaluation_runs = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Index("ix_evaluation_runs_user_id", "user_id"),
     Index("ix_evaluation_runs_status", "status"),
+    Index("ix_evaluation_runs_lease_expires_at", "lease_expires_at"),
 )
 
 run_model_snapshots = Table(
@@ -178,6 +184,18 @@ def _build_redis(redis_url: str) -> redis.Redis:
 
 def get_engine(runtime_settings: Settings | None = None) -> Engine:
     return _build_engine((runtime_settings or Settings()).database_url)
+
+
+def upgrade_database(runtime_settings: Settings = settings) -> None:
+    """Upgrade the configured database through the checked-in Alembic history."""
+    backend_root = Path(__file__).resolve().parents[1]
+    alembic_config = Config(str(backend_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(backend_root / "alembic"))
+    alembic_config.set_main_option(
+        "sqlalchemy.url",
+        runtime_settings.database_url.replace("%", "%%"),
+    )
+    command.upgrade(alembic_config, "head")
 
 
 def get_runtime_settings() -> Settings:
