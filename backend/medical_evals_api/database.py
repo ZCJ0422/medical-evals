@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from functools import lru_cache
+import os
 
 from fastapi import Depends
 import redis
@@ -81,6 +82,7 @@ evaluation_runs = Table(
     metadata,
     Column("id", String(36), primary_key=True),
     Column("user_id", String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("name", String(255), nullable=False),
     Column("evaluation_definition_id", String(64), ForeignKey("evaluation_definitions.id"), nullable=False),
     Column("target_model_profile_id", String(36), ForeignKey("model_profiles.id"), nullable=False),
     Column("judge_model_profile_id", String(36), ForeignKey("model_profiles.id")),
@@ -183,7 +185,13 @@ def get_runtime_settings() -> Settings:
 
 
 def get_session(runtime_settings: Settings = Depends(get_runtime_settings)) -> Iterator[Session]:
-    session = _build_session_factory(runtime_settings.database_url)()
+    if isinstance(runtime_settings, Settings):
+        resolved_settings = runtime_settings
+    elif os.getenv("MEDICAL_EVALS_DATABASE_URL") is not None:
+        resolved_settings = Settings()
+    else:
+        resolved_settings = settings
+    session = _build_session_factory(resolved_settings.database_url)()
     try:
         yield session
     finally:

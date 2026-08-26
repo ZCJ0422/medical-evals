@@ -1,6 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from .evaluations import (
+    EvaluationCreateCommand,
+    EvaluationDefinition,
+    EvaluationDefinitionSplit,
+    EvaluationRun,
+)
 from .model_profiles import ModelProfile
 from ..schemas.common import TaskProgress, TaskStatus
 
@@ -33,4 +39,12 @@ class EvaluationTask:
     lease_expires_at: str = ""
 
 
-__all__ = ["EvaluationTask", "ModelProfile", "utc_now"]
+__all__ = [
+    "EvaluationCreateCommand",
+    "EvaluationDefinition",
+    "EvaluationDefinitionSplit",
+    "EvaluationRun",
+    "EvaluationTask",
+    "ModelProfile",
+    "utc_now",
+]

@@ -4,16 +4,26 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
-from ..auth import AdminIdentity, require_admin
+from ..auth import AdminIdentity, CurrentUser, require_admin
 from ..config import settings
+from ..database import get_session
+from ..models import EvaluationCreateCommand
+from ..repositories.evaluations import EvaluationRepository
 from ..repositories.tasks import TaskRepository
 from ..schemas.common import TaskStatus, TaskSummary
-from ..schemas.evaluations import EvaluationCreate, PreflightResponse
+from ..schemas.evaluations import (
+    EvaluationCreate,
+    EvaluationRunCreate,
+    EvaluationRunResponse,
+    PreflightResponse,
+)
 from ..secrets import encrypt_secret
 from .catalog import DATASETS
 
 router = APIRouter(prefix="/api/evaluations", tags=["evaluations"])
+v1_router = APIRouter(prefix="/api/v1/evaluations", tags=["evaluations"])
 
 _RETRY_SUFFIX = re.compile(r"\s-\sretry(\d*)$", re.IGNORECASE)
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -45,8 +55,31 @@ def repository() -> TaskRepository:
     return TaskRepository(settings.database_path, settings.artifact_dir)
 
 
+def evaluation_repository(session: Session) -> EvaluationRepository:
+    return EvaluationRepository(session, settings.artifact_dir)
+
+
 def _summary(task) -> TaskSummary:
     return TaskSummary(task_id=task.task_id, name=task.name, target_model_id=task.target_model_id, judge_model_id=task.judge_model_id, dataset_version_id=task.dataset_version_id, status=task.status, progress=task.progress, created_at=task.created_at, updated_at=task.updated_at, error=task.error)
+
+
+def _run_response(run) -> EvaluationRunResponse:
+    return EvaluationRunResponse(
+        run_id=run.run_id,
+        name=run.name,
+        evaluation_definition_id=run.evaluation_definition_id,
+        target_model_id=run.target_model_id,
+        judge_model_id=run.judge_model_id,
+        dataset_version_id=run.dataset_version_id,
+        status=run.status,
+        progress=run.progress,
+        split=run.split,
+        sample_limit=run.max_samples,
+        config=run.config,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+        error=run.error,
+    )
 
 
 @router.post("/preflight", response_model=PreflightResponse)
@@ -178,4 +211,149 @@ def delete_evaluation(task_id: str, _: AdminIdentity = Depends(require_admin)) -
     artifact_dir = settings.artifact_dir / task_id
     if artifact_dir.exists():
         import shutil
+        shutil.rmtree(artifact_dir)
+
+
+@v1_router.get("", response_model=list[EvaluationRunResponse], include_in_schema=False)
+def list_evaluations_v1(
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> list[EvaluationRunResponse]:
+    repo = evaluation_repository(session)
+    return [_run_response(run) for run in repo.list_owned(user.id)]
+
+
+@v1_router.post("", response_model=EvaluationRunResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+def create_evaluation_v1(
+    payload: EvaluationRunCreate,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> EvaluationRunResponse:
+    repo = evaluation_repository(session)
+    try:
+        run = repo.create(
+            user.id,
+            EvaluationCreateCommand(
+                name=payload.name,
+                evaluation_definition_id=payload.evaluation_definition_id,
+                target_model_profile_id=payload.target_model_id,
+                judge_model_profile_id=payload.judge_model_id.strip() or None,
+                split=payload.split,
+                sample_limit=payload.sample_limit,
+                config=dict(payload.config),
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except KeyError as exc:
+        detail = {
+            "evaluation_definition": "Evaluation definition not found",
+            "split": "Evaluation split not found",
+            "target_model": "Target model profile not found",
+            "judge_model": "Judge model profile not found",
+        }.get(str(exc.args[0]), "Evaluation could not be created")
+        raise HTTPException(status_code=404, detail=detail) from exc
+    from ..queue import LocalTaskQueue
+
+    LocalTaskQueue(repo).enqueue(run.run_id)
+    return _run_response(run)
+
+
+@v1_router.get("/{run_id}", response_model=EvaluationRunResponse, include_in_schema=False)
+def get_evaluation_v1(
+    run_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> EvaluationRunResponse:
+    run = evaluation_repository(session).get_owned(run_id, user.id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Evaluation run not found")
+    return _run_response(run)
+
+
+@v1_router.post("/{run_id}/cancel", response_model=EvaluationRunResponse, include_in_schema=False)
+def cancel_evaluation_v1(
+    run_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> EvaluationRunResponse:
+    repo = evaluation_repository(session)
+    run = repo.get_owned(run_id, user.id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Evaluation run not found")
+    if run.status.value in {"completed", "partial_failed", "failed", "cancelled"}:
+        return _run_response(run)
+    return _run_response(repo.set_status(run_id, TaskStatus.CANCELLED))
+
+
+@v1_router.post("/{run_id}/retry", response_model=EvaluationRunResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+def retry_evaluation_v1(
+    run_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> EvaluationRunResponse:
+    repo = evaluation_repository(session)
+    run = repo.get_owned(run_id, user.id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Evaluation run not found")
+    if run.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
+        raise HTTPException(status_code=409, detail="Only finished evaluations can be retried")
+    retried = repo.create(
+        user.id,
+        EvaluationCreateCommand(
+            name=_retry_name(repo, run.name),
+            evaluation_definition_id=run.evaluation_definition_id,
+            target_model_profile_id=run.target_model_profile_id,
+            judge_model_profile_id=run.judge_model_profile_id,
+            split=run.split,
+            sample_limit=run.max_samples,
+            config=run.config,
+            retry_of_run_id=run.run_id,
+        ),
+    )
+    from ..queue import LocalTaskQueue
+
+    LocalTaskQueue(repo).enqueue(retried.run_id)
+    return _run_response(retried)
+
+
+@v1_router.post("/{run_id}/resume", response_model=EvaluationRunResponse, include_in_schema=False)
+def resume_evaluation_v1(
+    run_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> EvaluationRunResponse:
+    repo = evaluation_repository(session)
+    run = repo.get_owned(run_id, user.id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Evaluation run not found")
+    if run.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
+        raise HTTPException(status_code=409, detail="Evaluation is already active")
+    if run.status == TaskStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Completed evaluations do not need to be resumed")
+    resumed = repo.set_status(run_id, TaskStatus.QUEUED)
+    from ..queue import LocalTaskQueue
+
+    LocalTaskQueue(repo).enqueue(resumed.run_id)
+    return _run_response(resumed)
+
+
+@v1_router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
+def delete_evaluation_v1(
+    run_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> None:
+    repo = evaluation_repository(session)
+    run = repo.get_owned(run_id, user.id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Evaluation run not found")
+    if run.status == TaskStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="Cancel the running evaluation before deleting it")
+    if not repo.delete(run_id):
+        raise HTTPException(status_code=404, detail="Evaluation run not found")
+    artifact_dir = settings.artifact_dir / run_id
+    if artifact_dir.exists():
+        import shutil
+
         shutil.rmtree(artifact_dir)

@@ -28,7 +28,7 @@ class Worker:
             raise KeyError(task_id)
         if task.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
             return task
-        if self.worker_id and task.status == TaskStatus.RUNNING and task.lease_owner != self.worker_id:
+        if self.worker_id and task.status == TaskStatus.RUNNING and task.lease_owner and task.lease_owner != self.worker_id:
             raise RuntimeError("Worker does not own the task lease")
         artifacts = ArtifactWriter(self.repository.artifact_root, task_id)
         artifacts.log("Run started")

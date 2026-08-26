@@ -26,6 +26,17 @@ class EvaluationSummary:
     retry_count: int
 
 
+def _as_public_timestamp(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return isoformat()
+    return str(value)
+
+
 class ResultService:
     def __init__(self, repository):
         self.repository = repository
@@ -52,8 +63,8 @@ class ResultService:
             task.dataset_version_id,
             task.target_model_id,
             task.judge_model_id,
-            task.created_at,
-            task.updated_at,
+            _as_public_timestamp(task.created_at),
+            _as_public_timestamp(task.updated_at),
             task.error,
             task.progress.stage,
             task.progress.progress_percent,

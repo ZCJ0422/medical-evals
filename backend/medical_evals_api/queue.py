@@ -15,7 +15,7 @@ class TaskQueue(Protocol):
 
 
 class LocalTaskQueue:
-    def __init__(self, repository: TaskRepository):
+    def __init__(self, repository):
         self.repository = repository
 
     def enqueue(self, task_id: str) -> None:

@@ -1,0 +1,536 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
+
+from sqlalchemy import delete, insert, select, update
+from sqlalchemy.orm import Session
+
+from ..config import settings
+from ..database import (
+    evaluation_definitions,
+    evaluation_results,
+    evaluation_runs,
+    evaluation_sample_results,
+    metadata,
+    model_profiles,
+    run_model_snapshots,
+    users,
+)
+from ..evaluation_sources import (
+    get_builtin_evaluation_definition,
+    get_definition_split,
+    list_builtin_evaluation_definitions,
+)
+from ..models.evaluations import EvaluationCreateCommand, EvaluationDefinition, EvaluationRun
+from ..schemas.common import TaskProgress, TaskStatus
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _coerce_progress(value: object) -> TaskProgress:
+    if isinstance(value, TaskProgress):
+        return value
+    if isinstance(value, str):
+        return TaskProgress.model_validate_json(value)
+    if isinstance(value, dict):
+        return TaskProgress.model_validate(value)
+    return TaskProgress()
+
+
+class EvaluationRepository:
+    def __init__(self, session: Session, artifact_root: Path | None = None):
+        self.session = session
+        self.artifact_root = artifact_root or settings.artifact_dir
+        self._ensure_tables()
+        self._seed_builtin_definitions()
+
+    def _ensure_tables(self) -> None:
+        metadata.create_all(
+            self.session.bind,
+            tables=[
+                users,
+                model_profiles,
+                evaluation_definitions,
+                evaluation_runs,
+                run_model_snapshots,
+                evaluation_results,
+                evaluation_sample_results,
+            ],
+            checkfirst=True,
+        )
+
+    def _seed_builtin_definitions(self) -> None:
+        existing = {
+            row.id
+            for row in self.session.execute(select(evaluation_definitions.c.id)).mappings()
+        }
+        inserted = False
+        for definition in list_builtin_evaluation_definitions():
+            if definition.id in existing:
+                continue
+            first_split = definition.splits[0]
+            self.session.execute(
+                insert(evaluation_definitions).values(
+                    id=definition.id,
+                    name=definition.name,
+                    kind=definition.kind,
+                    dataset_version=first_split.dataset_version_id,
+                    requires_judge=definition.requires_judge,
+                    default_config_json=definition.default_config,
+                    is_enabled=True,
+                    created_at=_utcnow(),
+                    updated_at=_utcnow(),
+                )
+            )
+            inserted = True
+        if inserted:
+            self.session.commit()
+
+    def list_definitions(self) -> list[EvaluationDefinition]:
+        enabled = {
+            row.id
+            for row in self.session.execute(
+                select(evaluation_definitions.c.id).where(
+                    evaluation_definitions.c.is_enabled.is_(True)
+                )
+            ).mappings()
+        }
+        return [
+            definition
+            for definition in list_builtin_evaluation_definitions()
+            if definition.id in enabled
+        ]
+
+    def get_definition(self, definition_id: str) -> EvaluationDefinition | None:
+        row = self.session.execute(
+            select(evaluation_definitions).where(
+                evaluation_definitions.c.id == definition_id,
+                evaluation_definitions.c.is_enabled.is_(True),
+            )
+        ).mappings().first()
+        if row is None:
+            return None
+        return get_builtin_evaluation_definition(definition_id)
+
+    def _profile_for_user(self, profile_id: str, user_id: str):
+        return self.session.execute(
+            select(model_profiles).where(
+                model_profiles.c.id == profile_id,
+                model_profiles.c.user_id == user_id,
+            )
+        ).mappings().first()
+
+    def _snapshot_rows(self, run_id: str) -> dict[str, dict]:
+        rows = self.session.execute(
+            select(run_model_snapshots).where(run_model_snapshots.c.run_id == run_id)
+        ).mappings()
+        return {row["profile_role"]: dict(row) for row in rows}
+
+    def _secret_for_profile(self, profile_id: str | None) -> str:
+        if not profile_id:
+            return ""
+        row = self.session.execute(
+            select(model_profiles.c.api_key_encrypted).where(model_profiles.c.id == profile_id)
+        ).first()
+        return str(row[0]) if row is not None else ""
+
+    def _build_run(self, row) -> EvaluationRun:
+        split = get_definition_split(row["evaluation_definition_id"], row["split"])
+        if split is None:
+            raise KeyError(f"Unknown split {row['split']!r} for {row['evaluation_definition_id']}")
+        snapshots = self._snapshot_rows(row["id"])
+        target_snapshot = snapshots.get("target")
+        judge_snapshot = snapshots.get("judge")
+        if target_snapshot is None:
+            raise KeyError(f"Target snapshot missing for run {row['id']}")
+        return EvaluationRun(
+            run_id=row["id"],
+            user_id=row["user_id"],
+            name=row["name"],
+            evaluation_definition_id=row["evaluation_definition_id"],
+            target_model_profile_id=row["target_model_profile_id"],
+            judge_model_profile_id=row["judge_model_profile_id"],
+            target_model_id=target_snapshot["model_name"],
+            judge_model_id=judge_snapshot["model_name"] if judge_snapshot else "",
+            dataset_version_id=split.dataset_version_id,
+            rubric_id=split.rubric_id,
+            status=TaskStatus(row["status"]),
+            progress=_coerce_progress(row["progress_json"]),
+            split=row["split"],
+            max_samples=row["max_samples"],
+            config=dict(row["config_json"] or {}),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            queued_at=row["queued_at"],
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
+            error=row["error"],
+            retry_of_run_id=row["retry_of_run_id"],
+            target_base_url=target_snapshot["base_url"],
+            target_api_key_enc=self._secret_for_profile(row["target_model_profile_id"]),
+            judge_base_url=judge_snapshot["base_url"] if judge_snapshot else "",
+            judge_api_key_enc=self._secret_for_profile(row["judge_model_profile_id"]),
+        )
+
+    def create(self, user_id: str, command: EvaluationCreateCommand) -> EvaluationRun:
+        definition = self.get_definition(command.evaluation_definition_id)
+        if definition is None:
+            raise KeyError("evaluation_definition")
+        split = get_definition_split(definition.id, command.split)
+        if split is None:
+            raise KeyError("split")
+        target_profile = self._profile_for_user(command.target_model_profile_id, user_id)
+        if target_profile is None:
+            raise KeyError("target_model")
+        judge_profile = None
+        judge_profile_id = command.judge_model_profile_id or None
+        if definition.requires_judge and judge_profile_id is None:
+            raise ValueError("Judge model profile is required")
+        if judge_profile_id is not None:
+            judge_profile = self._profile_for_user(judge_profile_id, user_id)
+            if judge_profile is None:
+                raise KeyError("judge_model")
+            if judge_profile["id"] == target_profile["id"]:
+                raise ValueError("Target and Judge model profiles must differ")
+        now = _utcnow()
+        run_id = str(uuid4())
+        name = command.name.strip() or f"{definition.name}-{target_profile['model_name']}-{now.strftime('%Y%m%d-%H%M%S')}"
+        merged_config = dict(definition.default_config)
+        merged_config.update(command.config)
+        progress = TaskProgress().model_dump(mode="json")
+        self.session.execute(
+            insert(evaluation_runs).values(
+                id=run_id,
+                user_id=user_id,
+                name=name,
+                evaluation_definition_id=definition.id,
+                target_model_profile_id=target_profile["id"],
+                judge_model_profile_id=judge_profile["id"] if judge_profile else None,
+                retry_of_run_id=command.retry_of_run_id,
+                status=TaskStatus.QUEUED.value,
+                split=split.id,
+                max_samples=command.sample_limit,
+                config_json=merged_config,
+                progress_json=progress,
+                error=None,
+                queued_at=now,
+                started_at=None,
+                finished_at=None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        self.session.execute(
+            insert(run_model_snapshots).values(
+                id=str(uuid4()),
+                run_id=run_id,
+                profile_role="target",
+                source_model_profile_id=target_profile["id"],
+                display_name=target_profile["name"],
+                base_url=target_profile["base_url"],
+                model_name=target_profile["model_name"],
+                api_key_encrypted="",
+                created_at=now,
+            )
+        )
+        if judge_profile is not None:
+            self.session.execute(
+                insert(run_model_snapshots).values(
+                    id=str(uuid4()),
+                    run_id=run_id,
+                    profile_role="judge",
+                    source_model_profile_id=judge_profile["id"],
+                    display_name=judge_profile["name"],
+                    base_url=judge_profile["base_url"],
+                    model_name=judge_profile["model_name"],
+                    api_key_encrypted="",
+                    created_at=now,
+                )
+            )
+        self.session.commit()
+        created = self.get_owned(run_id, user_id)
+        assert created is not None
+        return created
+
+    def get(self, run_id: str) -> EvaluationRun | None:
+        row = self.session.execute(
+            select(evaluation_runs).where(evaluation_runs.c.id == run_id)
+        ).mappings().first()
+        return self._build_run(row) if row is not None else None
+
+    def get_owned(self, run_id: str, user_id: str) -> EvaluationRun | None:
+        row = self.session.execute(
+            select(evaluation_runs).where(
+                evaluation_runs.c.id == run_id,
+                evaluation_runs.c.user_id == user_id,
+            )
+        ).mappings().first()
+        return self._build_run(row) if row is not None else None
+
+    def list(self) -> list[EvaluationRun]:
+        rows = self.session.execute(
+            select(evaluation_runs).order_by(
+                evaluation_runs.c.created_at.desc(),
+                evaluation_runs.c.id.desc(),
+            )
+        ).mappings()
+        return [self._build_run(row) for row in rows]
+
+    def list_owned(self, user_id: str, filters: dict | None = None) -> list[EvaluationRun]:
+        stmt = select(evaluation_runs).where(
+            evaluation_runs.c.user_id == user_id
+        ).order_by(
+            evaluation_runs.c.created_at.desc(),
+            evaluation_runs.c.id.desc(),
+        )
+        if filters and filters.get("status"):
+            stmt = stmt.where(evaluation_runs.c.status == filters["status"])
+        rows = self.session.execute(stmt).mappings()
+        return [self._build_run(row) for row in rows]
+
+    def claim_next(self, worker_id: str = "", lease_seconds: int = 300) -> EvaluationRun | None:
+        del worker_id, lease_seconds
+        row = self.session.execute(
+            select(evaluation_runs)
+            .where(evaluation_runs.c.status == TaskStatus.QUEUED.value)
+            .order_by(evaluation_runs.c.created_at.asc(), evaluation_runs.c.id.asc())
+            .limit(1)
+        ).mappings().first()
+        if row is None:
+            return None
+        now = _utcnow()
+        updated = self.session.execute(
+            update(evaluation_runs)
+            .where(
+                evaluation_runs.c.id == row["id"],
+                evaluation_runs.c.status == TaskStatus.QUEUED.value,
+            )
+            .values(
+                status=TaskStatus.RUNNING.value,
+                started_at=row["started_at"] or now,
+                updated_at=now,
+            )
+        )
+        self.session.commit()
+        if not updated.rowcount:
+            return None
+        return self.get(row["id"])
+
+    def renew_lease(self, task_id: str, worker_id: str, lease_seconds: int = 300) -> bool:
+        del worker_id, lease_seconds
+        updated = self.session.execute(
+            update(evaluation_runs)
+            .where(
+                evaluation_runs.c.id == task_id,
+                evaluation_runs.c.status == TaskStatus.RUNNING.value,
+            )
+            .values(updated_at=_utcnow())
+        )
+        self.session.commit()
+        return bool(updated.rowcount)
+
+    def recover_expired_leases(self, error: str) -> int:
+        del error
+        return 0
+
+    def recover_interrupted_tasks(self, error: str) -> int:
+        updated = self.session.execute(
+            update(evaluation_runs)
+            .where(evaluation_runs.c.status == TaskStatus.RUNNING.value)
+            .values(
+                status=TaskStatus.FAILED.value,
+                error=error,
+                finished_at=_utcnow(),
+                updated_at=_utcnow(),
+            )
+        )
+        self.session.commit()
+        return int(updated.rowcount or 0)
+
+    def update_progress(self, task_id: str, progress: TaskProgress, worker_id: str = "") -> EvaluationRun:
+        del worker_id
+        self.session.execute(
+            update(evaluation_runs)
+            .where(evaluation_runs.c.id == task_id)
+            .values(progress_json=progress.model_dump(mode="json"), updated_at=_utcnow())
+        )
+        self.session.commit()
+        run = self.get(task_id)
+        if run is None:
+            raise KeyError(task_id)
+        return run
+
+    def set_status(self, task_id: str, status: TaskStatus, error: str | None = None) -> EvaluationRun:
+        values = {"status": status.value, "error": error, "updated_at": _utcnow()}
+        if status == TaskStatus.RUNNING:
+            values["started_at"] = _utcnow()
+            values["finished_at"] = None
+        elif status in {
+            TaskStatus.COMPLETED,
+            TaskStatus.PARTIAL_FAILED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        }:
+            values["finished_at"] = _utcnow()
+        self.session.execute(
+            update(evaluation_runs).where(evaluation_runs.c.id == task_id).values(**values)
+        )
+        self.session.commit()
+        run = self.get(task_id)
+        if run is None:
+            raise KeyError(task_id)
+        return run
+
+    def set_status_if_not_cancelled(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        error: str | None = None,
+        worker_id: str = "",
+    ) -> EvaluationRun:
+        del worker_id
+        values = {"status": status.value, "error": error, "updated_at": _utcnow()}
+        if status in {
+            TaskStatus.COMPLETED,
+            TaskStatus.PARTIAL_FAILED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        }:
+            values["finished_at"] = _utcnow()
+        updated = self.session.execute(
+            update(evaluation_runs)
+            .where(
+                evaluation_runs.c.id == task_id,
+                evaluation_runs.c.status != TaskStatus.CANCELLED.value,
+            )
+            .values(**values)
+        )
+        self.session.commit()
+        if not updated.rowcount:
+            run = self.get(task_id)
+            if run is None:
+                raise KeyError(task_id)
+            return run
+        run = self.get(task_id)
+        if run is None:
+            raise KeyError(task_id)
+        return run
+
+    def save_result(
+        self,
+        task_id: str,
+        *,
+        total_score: float,
+        dimension_scores: dict[str, float],
+        error_categories: dict[str, int],
+        completed_count: int,
+        failed_count: int,
+        retry_count: int,
+        accuracy: float | None = None,
+        parse_success_rate: float | None = None,
+        request_success_count: int | None = None,
+        parse_failed_count: int = 0,
+        worker_id: str = "",
+    ) -> None:
+        del worker_id
+        result_id = str(uuid4())
+        now = _utcnow()
+        existing = self.session.execute(
+            select(evaluation_results.c.id).where(evaluation_results.c.run_id == task_id)
+        ).first()
+        payload = {
+            "run_id": task_id,
+            "result_version": "workbench.v1",
+            "summary_json": {
+                "total_score": total_score,
+                "dimension_scores": dimension_scores,
+                "error_categories": error_categories,
+                "completed_count": completed_count,
+                "failed_count": failed_count,
+                "retry_count": retry_count,
+                "accuracy": accuracy if accuracy is not None else total_score,
+                "parse_success_rate": parse_success_rate,
+                "request_success_count": request_success_count if request_success_count is not None else completed_count,
+                "parse_failed_count": parse_failed_count,
+            },
+            "artifact_index_json": {},
+            "updated_at": now,
+        }
+        if existing is None:
+            payload["id"] = result_id
+            payload["created_at"] = now
+            self.session.execute(insert(evaluation_results).values(**payload))
+        else:
+            self.session.execute(
+                update(evaluation_results)
+                .where(evaluation_results.c.run_id == task_id)
+                .values(**payload)
+            )
+        self.session.commit()
+
+    def get_result(self, task_id: str) -> dict | None:
+        row = self.session.execute(
+            select(evaluation_results).where(evaluation_results.c.run_id == task_id)
+        ).mappings().first()
+        if row is None:
+            return None
+        summary = dict(row["summary_json"] or {})
+        return {
+            "task_id": task_id,
+            "total_score": summary.get("total_score", 0.0),
+            "accuracy": summary.get("accuracy", summary.get("total_score", 0.0)),
+            "parse_success_rate": summary.get("parse_success_rate"),
+            "request_success_count": summary.get("request_success_count", summary.get("completed_count", 0)),
+            "parse_failed_count": summary.get("parse_failed_count", 0),
+            "dimension_scores": dict(summary.get("dimension_scores", {})),
+            "error_categories": dict(summary.get("error_categories", {})),
+            "completed_count": summary.get("completed_count", 0),
+            "failed_count": summary.get("failed_count", 0),
+            "retry_count": summary.get("retry_count", 0),
+        }
+
+    def get_samples(self, task_id: str, offset: int = 0, limit: int = 50) -> tuple[list[dict], int]:
+        run = self.get(task_id)
+        if run is None:
+            raise KeyError(task_id)
+        path = self.artifact_root / task_id / "samples.jsonl"
+        if not path.exists():
+            return [], 0
+        records: list[dict] = []
+        total = 0
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(value, dict):
+                    continue
+                if total >= offset and len(records) < limit:
+                    records.append(value)
+                total += 1
+        return records, total
+
+    def delete(self, task_id: str) -> bool:
+        self.session.execute(
+            delete(run_model_snapshots).where(run_model_snapshots.c.run_id == task_id)
+        )
+        self.session.execute(
+            delete(evaluation_results).where(evaluation_results.c.run_id == task_id)
+        )
+        self.session.execute(
+            delete(evaluation_sample_results).where(evaluation_sample_results.c.run_id == task_id)
+        )
+        result = self.session.execute(
+            delete(evaluation_runs).where(evaluation_runs.c.id == task_id)
+        )
+        self.session.commit()
+        return bool(result.rowcount)

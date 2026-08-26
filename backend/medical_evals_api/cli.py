@@ -3,10 +3,11 @@ import uuid
 
 import uvicorn
 import time
+from sqlalchemy.orm import sessionmaker
 
 from .config import settings, validate_runtime_security
-from .db import connect
-from .repositories.tasks import TaskRepository
+from .database import get_engine, metadata
+from .repositories.evaluations import EvaluationRepository
 from .queue import LocalTaskQueue, TaskQueue
 from .worker import Worker
 
@@ -16,28 +17,57 @@ def main() -> None:
     parser.add_argument("command", choices=["api", "worker", "init-db"])
     args = parser.parse_args()
     validate_runtime_security()
+    engine = get_engine(settings)
     if args.command == "init-db":
-        with connect(settings.database_path):
-            pass
+        metadata.create_all(engine, checkfirst=True)
+        session = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)()
+        try:
+            EvaluationRepository(session, settings.artifact_dir)
+        finally:
+            session.close()
         return
     if args.command == "worker":
-        repo = TaskRepository(settings.database_path, settings.artifact_dir)
-        queue: TaskQueue = LocalTaskQueue(repo)
         worker_id = uuid.uuid4().hex
-        repo.recover_expired_leases(
-            "Worker lease expired before the evaluation reached a terminal state; create a retry to run it again"
+        session_factory = sessionmaker(
+            bind=engine,
+            autoflush=False,
+            autocommit=False,
+            expire_on_commit=False,
         )
-        repo.recover_interrupted_tasks(
-            "Worker stopped before the evaluation reached a terminal state; create a retry to run it again"
-        )
-        while True:
-            repo.recover_expired_leases(
+        startup_session = session_factory()
+        try:
+            startup_repo = EvaluationRepository(startup_session, settings.artifact_dir)
+            startup_repo.recover_expired_leases(
                 "Worker lease expired before the evaluation reached a terminal state; create a retry to run it again"
             )
-            task_id = queue.claim_next(worker_id, settings.worker_lease_seconds)
+            startup_repo.recover_interrupted_tasks(
+                "Worker stopped before the evaluation reached a terminal state; create a retry to run it again"
+            )
+        finally:
+            startup_session.close()
+        while True:
+            claim_session = session_factory()
+            try:
+                repo = EvaluationRepository(claim_session, settings.artifact_dir)
+                repo.recover_expired_leases(
+                    "Worker lease expired before the evaluation reached a terminal state; create a retry to run it again"
+                )
+                queue: TaskQueue = LocalTaskQueue(repo)
+                task_id = queue.claim_next(worker_id, settings.worker_lease_seconds)
+            finally:
+                claim_session.close()
             if task_id:
-                try: Worker(repo, worker_id=worker_id, lease_seconds=settings.worker_lease_seconds).run_task(task_id)
-                except Exception as error: print(f"worker task {task_id} failed: {error}", flush=True)
+                run_session = session_factory()
+                try:
+                    Worker(
+                        EvaluationRepository(run_session, settings.artifact_dir),
+                        worker_id=worker_id,
+                        lease_seconds=settings.worker_lease_seconds,
+                    ).run_task(task_id)
+                except Exception as error:
+                    print(f"worker task {task_id} failed: {error}", flush=True)
+                finally:
+                    run_session.close()
             else:
                 time.sleep(1)
 
