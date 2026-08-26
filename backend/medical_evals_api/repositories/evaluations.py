@@ -297,6 +297,44 @@ class EvaluationRepository:
         rows = self.session.execute(stmt).mappings()
         return [self._build_run(row) for row in rows]
 
+    def list_queued_run_ids(self, limit: int | None = None) -> list[str]:
+        stmt = (
+            select(evaluation_runs.c.id)
+            .where(evaluation_runs.c.status == TaskStatus.QUEUED.value)
+            .order_by(evaluation_runs.c.created_at.asc(), evaluation_runs.c.id.asc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return [str(row[0]) for row in self.session.execute(stmt).all()]
+
+    def claim(
+        self,
+        run_id: str,
+        worker_id: str,
+        lease_seconds: int = 300,
+    ) -> EvaluationRun | None:
+        if not worker_id:
+            raise ValueError("worker_id is required to claim a run")
+        now = _utcnow()
+        updated = self.session.execute(
+            update(evaluation_runs)
+            .where(
+                evaluation_runs.c.id == run_id,
+                evaluation_runs.c.status == TaskStatus.QUEUED.value,
+            )
+            .values(
+                status=TaskStatus.RUNNING.value,
+                started_at=now,
+                lease_owner=worker_id,
+                lease_expires_at=now + timedelta(seconds=lease_seconds),
+                updated_at=now,
+            )
+        )
+        self.session.commit()
+        if not updated.rowcount:
+            return None
+        return self.get(run_id)
+
     def claim_next(self, worker_id: str = "", lease_seconds: int = 300) -> EvaluationRun | None:
         now = _utcnow()
         lease_owner = worker_id or None
