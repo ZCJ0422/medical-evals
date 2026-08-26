@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from .model_profiles import ModelProfile
 from ..schemas.common import TaskProgress, TaskStatus
 
 
@@ -30,3 +31,6 @@ class EvaluationTask:
     max_samples: int | None = None
     lease_owner: str = ""
     lease_expires_at: str = ""
+
+
+__all__ = ["EvaluationTask", "ModelProfile", "utc_now"]

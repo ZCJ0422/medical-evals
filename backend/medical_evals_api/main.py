@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings, validate_runtime_security
-from .routes import auth, catalog, evaluations, reports, results
+from .routes import auth, catalog, evaluations, models, reports, results
 
 
 @asynccontextmanager
@@ -28,6 +28,7 @@ app.include_router(auth.me_router)
 app.include_router(auth.v1_me_router)
 app.include_router(catalog.router)
 app.include_router(evaluations.router)
+app.include_router(models.router)
 app.include_router(results.router)
 app.include_router(reports.router)
 
