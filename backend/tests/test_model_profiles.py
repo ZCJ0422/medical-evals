@@ -82,6 +82,19 @@ def test_model_profile_rejects_cross_user_access(client):
     assert response.json() == {"detail": "Model profile not found"}
 
 
+def test_model_profile_options_allows_patch_for_browser_preflight(client):
+    response = client.options(
+        "/api/v1/models/some-profile-id",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "PATCH",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "PATCH" in response.headers["access-control-allow-methods"]
+
+
 def test_model_profile_update_can_replace_secret_without_returning_it(client):
     token = _issue_token(client, "alice")
     created = client.post("/api/v1/models", headers=_auth(token), json=_payload())
@@ -189,4 +202,54 @@ def test_model_profile_connection_test_sanitizes_provider_errors(client, monkeyp
 
     assert response.status_code == 502
     assert response.json() == {"detail": "Model provider rejected the connection test"}
+    assert "sk-test-secret" not in response.text
+
+
+def test_model_profile_connection_test_sanitizes_timeout_errors(client, monkeypatch):
+    token = _issue_token(client, "alice")
+    created = client.post("/api/v1/models", headers=_auth(token), json=_payload())
+    assert created.status_code == 201
+    profile_id = created.json()["id"]
+
+    class FakeClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def complete(self, *_args: object, **_kwargs: object) -> str:
+            raise httpx.ReadTimeout("timed out talking to sk-test-secret")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("medical_evals_api.services.model_profiles.OpenAICompatibleClient", FakeClient)
+
+    response = client.post(f"/api/v1/models/{profile_id}/test", headers=_auth(token))
+
+    assert response.status_code == 504
+    assert response.json() == {"detail": "Model provider timed out during the connection test"}
+    assert "sk-test-secret" not in response.text
+
+
+def test_model_profile_connection_test_sanitizes_network_errors(client, monkeypatch):
+    token = _issue_token(client, "alice")
+    created = client.post("/api/v1/models", headers=_auth(token), json=_payload())
+    assert created.status_code == 201
+    profile_id = created.json()["id"]
+
+    class FakeClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def complete(self, *_args: object, **_kwargs: object) -> str:
+            raise httpx.ConnectError("failed to reach sk-test-secret host")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("medical_evals_api.services.model_profiles.OpenAICompatibleClient", FakeClient)
+
+    response = client.post(f"/api/v1/models/{profile_id}/test", headers=_auth(token))
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Model provider could not be reached"}
     assert "sk-test-secret" not in response.text

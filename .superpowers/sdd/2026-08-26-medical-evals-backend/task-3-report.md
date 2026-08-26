@@ -22,7 +22,15 @@ Files changed:
 
 Verification:
 - `uv run pytest tests/test_model_profiles.py tests/test_model_security.py -q`
-- Result: `8 passed`
+- Result after initial implementation: `8 passed`
+
+Fix round:
+- Added `PATCH` to FastAPI CORS `allow_methods` so browser preflight accepts model-profile updates.
+- Added focused regression tests covering browser `PATCH` preflight plus sanitized timeout and network failures in `/api/v1/models/{id}/test`.
+
+Verification:
+- `uv run pytest tests/test_model_profiles.py tests/test_model_security.py -q`
+- Result after fix round: `11 passed`
 
 Out of scope preserved:
 - No evaluation persistence migration.
