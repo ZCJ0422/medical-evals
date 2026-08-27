@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from uuid import uuid4
+import logging
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -59,6 +60,7 @@ def _http_error_code(status_code: int) -> str:
 
 
 app = FastAPI(title="Medical Evals API", version="0.1.0", lifespan=lifespan)
+logger = logging.getLogger("medical_evals_api.request")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin, "http://127.0.0.1:3000"],
@@ -73,6 +75,7 @@ async def request_id_middleware(request: Request, call_next):
     request.state.request_id = str(uuid4())
     response = await call_next(request)
     response.headers["X-Request-ID"] = _request_id(request)
+    logger.info("request_complete", extra={"request_id": _request_id(request), "method": request.method, "path": request.url.path, "status_code": response.status_code})
     return response
 
 

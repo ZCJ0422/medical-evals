@@ -73,5 +73,9 @@ def validate_runtime_security(runtime_settings: Settings = settings) -> None:
         unsafe.append("MEDICAL_EVALS_JWT_SECRET")
     if runtime_settings.encryption_secret == "development-only-medical-evals-encryption-secret":
         unsafe.append("MEDICAL_EVALS_ENCRYPTION_SECRET")
+    if not runtime_settings.database_url.startswith("postgresql"):
+        unsafe.append("MEDICAL_EVALS_DATABASE_URL (PostgreSQL is required)")
+    if not runtime_settings.redis_url.startswith("redis://") and not runtime_settings.redis_url.startswith("rediss://"):
+        unsafe.append("MEDICAL_EVALS_REDIS_URL")
     if unsafe:
         raise RuntimeError(f"Unsafe production configuration; set: {', '.join(unsafe)}")

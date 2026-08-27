@@ -21,6 +21,7 @@ from ..schemas.evaluations import (
     EvaluationRunStatus,
     PreflightResponse,
 )
+from ..security import validate_public_base_url
 from ..secrets import encrypt_secret
 from .catalog import DATASETS
 
@@ -191,18 +192,20 @@ def preflight(payload: EvaluationCreate, _: AdminIdentity = Depends(require_admi
         errors.append("Judge API Key environment name is invalid")
     if not payload.target_api_key.strip() and not payload.target_api_key_env.strip():
         errors.append("Target API Key is required")
-    target_url = urlparse(payload.target_base_url.strip())
-    if target_url.scheme not in {"http", "https"} or not target_url.netloc:
-        errors.append("Target Base URL must be a complete http:// or https:// URL")
+    try:
+        validate_public_base_url(payload.target_base_url.strip())
+    except ValueError as exc:
+        errors.append(str(exc))
     needs_judge = not payload.dataset_version_id.startswith("medical-medqa")
     if needs_judge and not payload.judge_model_id.strip():
         errors.append("This dataset requires a Judge Model configuration")
     if needs_judge and not payload.judge_api_key.strip() and not payload.judge_api_key_env.strip():
         errors.append("Judge API Key is required for this dataset")
     if needs_judge:
-        judge_url = urlparse(payload.judge_base_url.strip())
-        if judge_url.scheme not in {"http", "https"} or not judge_url.netloc:
-            errors.append("Judge Base URL must be a complete http:// or https:// URL")
+        try:
+            validate_public_base_url(payload.judge_base_url.strip())
+        except ValueError as exc:
+            errors.append(str(exc))
     if needs_judge and payload.target_model_id == payload.judge_model_id:
         errors.append("Target model and Judge Model must be different configurations")
     return PreflightResponse(

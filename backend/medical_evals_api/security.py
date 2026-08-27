@@ -52,8 +52,9 @@ def validate_public_base_url(url: str) -> AnyHttpUrl:
 
 
 def _client_key(request: Request, bucket: str) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    source = forwarded.split(",", 1)[0].strip() or (request.client.host if request.client else "unknown")
+    # Do not trust a client-supplied forwarding header unless a trusted proxy
+    # has already rewritten the ASGI client address.
+    source = request.client.host if request.client else "unknown"
     return f"medical-evals:rate:{bucket}:{source}"
 
 
