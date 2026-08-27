@@ -7,8 +7,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from .config import settings, validate_runtime_security
+from .database import get_engine
 from .routes import auth, catalog, evaluations, models, reports, results
 from .schemas.common import ApiError, ApiErrorEnvelope
 
@@ -166,3 +168,13 @@ app.include_router(reports.v1_router)
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz() -> JSONResponse:
+    try:
+        with get_engine(settings).connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "not_ready", "database": "unavailable"})
+    return JSONResponse(content={"status": "ready", "database": "ok"})

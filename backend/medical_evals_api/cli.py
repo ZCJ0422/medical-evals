@@ -45,7 +45,7 @@ def main() -> None:
             lease_seconds=settings.worker_lease_seconds,
         ).run_forever(queue, repository_factory)
 
-    uvicorn.run("medical_evals_api.main:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("medical_evals_api.main:app", host="0.0.0.0", port=8000, reload=False)
 
 
 if __name__ == "__main__":
