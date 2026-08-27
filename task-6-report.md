@@ -4,7 +4,7 @@ Date: 2026-08-27
 
 ## Status
 
-Task 6 is implemented in the current worktree and verified with focused v1 route/result coverage plus adjacent compatibility checks.
+Task 6 is implemented, review findings are fixed, and the backend is verified with focused review-fix coverage plus a clean full backend pytest run.
 
 ## Implemented
 
@@ -18,33 +18,37 @@ Task 6 is implemented in the current worktree and verified with focused v1 route
 - Removed the stale v1 `resume` route while preserving the legacy `/api/evaluations/{task_id}/resume` compatibility path.
 - Extended repository list filtering for v1 status/date/pagination support.
 - Added focused Task 6 tests and updated explicitly needed compatibility tests to use temp SQLite wiring and the new v1 error contract.
+- Made v1 cancel/delete state changes repository-atomic and conditional on allowed source statuses, so terminal runs are not overwritten by late cancel requests and running runs are not deleted by a stale read/then-write path.
+- Persisted per-sample results into indexed `evaluation_sample_results` rows during worker execution and changed v1 sample pagination to use PostgreSQL/SQLAlchemy `COUNT + LIMIT/OFFSET` reads instead of scanning `samples.jsonl`.
+- Scoped the Task 6 common error envelope to `/api/v1/evaluations...` routes so existing `/api/v1/models...` behavior remains unchanged.
+- Normalized mixed naive/aware `created_after` / `created_before` filters before comparison and query application to avoid 500s from timezone mismatches.
+- Added regression coverage for cancel/retry/delete success and conflict cases, admin visibility, cross-user mutation attempts, repository-atomic state guards, and mixed-timezone date filtering.
 
 ## Tests
 
-Focused Task 6 suite:
+Focused review-fix suite:
 
 ```bash
 UV_CACHE_DIR=/private/tmp/medical-evals-uv-cache uv run pytest \
   tests/test_v1_evaluation_routes.py \
   tests/test_results_security.py \
+  tests/test_model_profiles.py \
+  tests/test_model_security.py \
+  tests/test_evaluation_persistence_postgres.py \
   tests/test_result_persistence.py \
   tests/test_reports.py \
   tests/test_catalog_routes.py -q
 ```
 
-Result: `14 passed`
+Result: `37 passed, 1 skipped`
 
-Adjacent compatibility slice:
+Full backend suite:
 
 ```bash
-UV_CACHE_DIR=/private/tmp/medical-evals-uv-cache uv run pytest \
-  tests/test_evaluation_persistence_postgres.py \
-  tests/test_evaluation_routes.py \
-  tests/test_delete_route.py \
-  tests/test_evaluation_list.py -q
+UV_CACHE_DIR=/private/tmp/medical-evals-uv-cache uv run pytest -q
 ```
 
-Result: `21 passed, 1 skipped`
+Result: `153 passed, 2 skipped`
 
 ## Concerns
 

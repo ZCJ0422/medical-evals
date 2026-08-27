@@ -18,8 +18,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-def _is_v1_request(request: Request) -> bool:
-    return request.url.path.startswith("/api/v1/")
+def _uses_v1_error_envelope(request: Request) -> bool:
+    return request.url.path.startswith("/api/v1/evaluations")
 
 
 def _request_id(request: Request) -> str:
@@ -78,7 +78,7 @@ async def request_id_middleware(request: Request, call_next):
 
 @app.exception_handler(ApiError)
 async def handle_api_error(request: Request, exc: ApiError):
-    if _is_v1_request(request):
+    if _uses_v1_error_envelope(request):
         return _error_response(
             request,
             status_code=exc.status_code,
@@ -94,7 +94,7 @@ async def handle_api_error(request: Request, exc: ApiError):
 
 @app.exception_handler(RequestValidationError)
 async def handle_validation_error(request: Request, exc: RequestValidationError):
-    if _is_v1_request(request):
+    if _uses_v1_error_envelope(request):
         return _error_response(
             request,
             status_code=422,
@@ -110,7 +110,7 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
 
 @app.exception_handler(HTTPException)
 async def handle_http_exception(request: Request, exc: HTTPException):
-    if _is_v1_request(request):
+    if _uses_v1_error_envelope(request):
         detail = exc.detail
         if isinstance(detail, list):
             message = "; ".join(str(item) for item in detail)
@@ -131,7 +131,7 @@ async def handle_http_exception(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def handle_unexpected_exception(request: Request, _exc: Exception):
-    if _is_v1_request(request):
+    if _uses_v1_error_envelope(request):
         return _error_response(
             request,
             status_code=500,

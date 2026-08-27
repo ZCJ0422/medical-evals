@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -41,6 +41,14 @@ def _coerce_progress(value: object) -> TaskProgress:
     if isinstance(value, dict):
         return TaskProgress.model_validate(value)
     return TaskProgress()
+
+
+def _normalize_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class EvaluationRepository:
@@ -283,10 +291,10 @@ class EvaluationRepository:
         status_values = filters.get("status_values")
         if status_values:
             stmt = stmt.where(evaluation_runs.c.status.in_(tuple(status_values)))
-        created_after = filters.get("created_after")
+        created_after = _normalize_datetime(filters.get("created_after"))
         if created_after is not None:
             stmt = stmt.where(evaluation_runs.c.created_at >= created_after)
-        created_before = filters.get("created_before")
+        created_before = _normalize_datetime(filters.get("created_before"))
         if created_before is not None:
             stmt = stmt.where(evaluation_runs.c.created_at <= created_before)
         limit = filters.get("limit")
@@ -478,9 +486,10 @@ class EvaluationRepository:
         return run
 
     def set_status(self, task_id: str, status: TaskStatus, error: str | None = None) -> EvaluationRun:
-        values = {"status": status.value, "error": error, "updated_at": _utcnow()}
+        now = _utcnow()
+        values = {"status": status.value, "error": error, "updated_at": now}
         if status == TaskStatus.RUNNING:
-            values["started_at"] = _utcnow()
+            values["started_at"] = now
             values["finished_at"] = None
         else:
             values["lease_owner"] = None
@@ -491,7 +500,7 @@ class EvaluationRepository:
             TaskStatus.FAILED,
             TaskStatus.CANCELLED,
         }:
-            values["finished_at"] = _utcnow()
+            values["finished_at"] = now
         self.session.execute(
             update(evaluation_runs).where(evaluation_runs.c.id == task_id).values(**values)
         )
@@ -546,6 +555,28 @@ class EvaluationRepository:
         if run is None:
             raise KeyError(task_id)
         return run
+
+    def cancel_if_active(self, task_id: str) -> tuple[EvaluationRun | None, bool]:
+        now = _utcnow()
+        updated = self.session.execute(
+            update(evaluation_runs)
+            .where(
+                evaluation_runs.c.id == task_id,
+                evaluation_runs.c.status.in_(
+                    (TaskStatus.QUEUED.value, TaskStatus.RUNNING.value)
+                ),
+            )
+            .values(
+                status=TaskStatus.CANCELLED.value,
+                error=None,
+                lease_owner=None,
+                lease_expires_at=None,
+                finished_at=now,
+                updated_at=now,
+            )
+        )
+        self.session.commit()
+        return self.get(task_id), bool(updated.rowcount)
 
     def save_result(
         self,
@@ -606,12 +637,22 @@ class EvaluationRepository:
             payload["id"] = result_id
             payload["created_at"] = now
             self.session.execute(insert(evaluation_results).values(**payload))
+            persisted_result_id = result_id
         else:
             self.session.execute(
                 update(evaluation_results)
                 .where(evaluation_results.c.run_id == task_id)
                 .values(**payload)
             )
+            persisted_result_id = str(existing[0])
+        self.session.execute(
+            update(evaluation_sample_results)
+            .where(evaluation_sample_results.c.run_id == task_id)
+            .values(
+                evaluation_result_id=persisted_result_id,
+                updated_at=now,
+            )
+        )
         self.session.commit()
 
     def get_result(self, task_id: str) -> dict | None:
@@ -635,32 +676,104 @@ class EvaluationRepository:
             "retry_count": summary.get("retry_count", 0),
         }
 
+    def upsert_sample_result(self, task_id: str, sample: dict[str, Any]) -> None:
+        run = self.get(task_id)
+        if run is None:
+            raise KeyError(task_id)
+        index = int(sample.get("index", 0))
+        now = _utcnow()
+        existing_result = self.session.execute(
+            select(evaluation_results.c.id).where(evaluation_results.c.run_id == task_id)
+        ).first()
+        judge_payload = sample.get("judge")
+        if judge_payload is None:
+            judge_payload = sample.get("rubric_judgments")
+        values = {
+            "run_id": task_id,
+            "evaluation_result_id": str(existing_result[0]) if existing_result is not None else None,
+            "sample_index": index,
+            "sample_id": str(sample.get("sample_id", "")) or None,
+            "status": "failed" if sample.get("error") else "completed",
+            "score": sample.get("score"),
+            "judge_json": judge_payload,
+            "artifact_refs_json": dict(sample),
+            "output_artifact_path": f"{task_id}/samples.jsonl",
+            "updated_at": now,
+        }
+        updated = self.session.execute(
+            update(evaluation_sample_results)
+            .where(
+                evaluation_sample_results.c.run_id == task_id,
+                evaluation_sample_results.c.sample_index == index,
+            )
+            .values(**values)
+        )
+        if updated.rowcount:
+            self.session.commit()
+            return
+        try:
+            self.session.execute(
+                insert(evaluation_sample_results).values(
+                    id=str(uuid4()),
+                    created_at=now,
+                    **values,
+                )
+            )
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            self.session.execute(
+                update(evaluation_sample_results)
+                .where(
+                    evaluation_sample_results.c.run_id == task_id,
+                    evaluation_sample_results.c.sample_index == index,
+                )
+                .values(**values)
+            )
+            self.session.commit()
+
     def get_samples(self, task_id: str, offset: int = 0, limit: int = 50) -> tuple[list[dict], int]:
         run = self.get(task_id)
         if run is None:
             raise KeyError(task_id)
-        path = self.artifact_root / task_id / "samples.jsonl"
-        if not path.exists():
+        total = int(
+            self.session.execute(
+                select(func.count())
+                .select_from(evaluation_sample_results)
+                .where(evaluation_sample_results.c.run_id == task_id)
+            ).scalar_one()
+        )
+        if total == 0:
             return [], 0
+        rows = self.session.execute(
+            select(
+                evaluation_sample_results.c.artifact_refs_json,
+                evaluation_sample_results.c.sample_index,
+            )
+            .where(evaluation_sample_results.c.run_id == task_id)
+            .order_by(evaluation_sample_results.c.sample_index.asc())
+            .offset(offset)
+            .limit(limit)
+        ).mappings()
         records: list[dict] = []
-        total = 0
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    value = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(value, dict):
-                    continue
-                if total >= offset and len(records) < limit:
-                    records.append(value)
-                total += 1
+        for row in rows:
+            payload = row["artifact_refs_json"]
+            if isinstance(payload, dict):
+                records.append(dict(payload))
         return records, total
 
-    def delete(self, task_id: str) -> bool:
+    def delete_if_not_running(self, task_id: str) -> str:
+        row = self.session.execute(
+            select(evaluation_runs.c.id, evaluation_runs.c.status)
+            .where(evaluation_runs.c.id == task_id)
+            .with_for_update()
+        ).mappings().first()
+        if row is None:
+            self.session.rollback()
+            return "not_found"
+        if row["status"] == TaskStatus.RUNNING.value:
+            self.session.rollback()
+            return "conflict"
         self.session.execute(
             delete(run_model_snapshots).where(run_model_snapshots.c.run_id == task_id)
         )
@@ -671,7 +784,16 @@ class EvaluationRepository:
             delete(evaluation_sample_results).where(evaluation_sample_results.c.run_id == task_id)
         )
         result = self.session.execute(
-            delete(evaluation_runs).where(evaluation_runs.c.id == task_id)
+            delete(evaluation_runs).where(
+                evaluation_runs.c.id == task_id,
+                evaluation_runs.c.status != TaskStatus.RUNNING.value,
+            )
         )
+        if not result.rowcount:
+            self.session.rollback()
+            return "conflict"
         self.session.commit()
-        return bool(result.rowcount)
+        return "deleted"
+
+    def delete(self, task_id: str) -> bool:
+        return self.delete_if_not_running(task_id) == "deleted"

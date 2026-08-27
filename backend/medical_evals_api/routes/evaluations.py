@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -159,6 +159,14 @@ def _visible_runs(
     if user.role == "admin":
         return repo.list(filters)
     return repo.list_owned(user.id, filters)
+
+
+def _normalize_filter_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _enqueue_visible_run(repo: EvaluationRepository, run_id: str) -> None:
@@ -336,6 +344,8 @@ def list_evaluations_v1(
 ) -> list[EvaluationRunResponse]:
     if offset < 0 or limit < 1 or limit > 200:
         raise ApiError(status_code=422, code="invalid_request", message="Invalid pagination")
+    created_after = _normalize_filter_datetime(created_after)
+    created_before = _normalize_filter_datetime(created_before)
     if (
         created_after is not None
         and created_before is not None
@@ -415,13 +425,19 @@ def cancel_evaluation_v1(
     run = _visible_run(repo, run_id, user)
     if run is None:
         raise ApiError(404, "evaluation_run_not_found", "Evaluation run not found")
-    if run.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
+    updated_run, changed = repo.cancel_if_active(run_id)
+    if changed:
+        assert updated_run is not None
+        return _run_response(updated_run)
+    if updated_run is None:
+        raise ApiError(404, "evaluation_run_not_found", "Evaluation run not found")
+    if updated_run.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
         raise ApiError(
             409,
             "invalid_state_transition",
             "Only queued or running evaluations can be cancelled",
         )
-    return _run_response(repo.set_status(run_id, TaskStatus.CANCELLED))
+    return _run_response(updated_run)
 
 
 @v1_router.post("/{run_id}/retry", response_model=EvaluationRunResponse, status_code=http_status.HTTP_201_CREATED)
@@ -467,13 +483,14 @@ def delete_evaluation_v1(
     run = _visible_run(repo, run_id, user)
     if run is None:
         raise ApiError(404, "evaluation_run_not_found", "Evaluation run not found")
-    if run.status == TaskStatus.RUNNING:
+    outcome = repo.delete_if_not_running(run_id)
+    if outcome == "conflict":
         raise ApiError(
             409,
             "invalid_state_transition",
             "Cancel the running evaluation before deleting it",
         )
-    if not repo.delete(run_id):
+    if outcome != "deleted":
         raise ApiError(404, "evaluation_run_not_found", "Evaluation run not found")
     artifact_dir = settings.artifact_dir / run_id
     if artifact_dir.exists():

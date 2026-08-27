@@ -351,6 +351,56 @@ def test_recover_expired_leases_skips_rows_renewed_before_conditional_update(cli
         session.close()
 
 
+def test_repository_cancel_and_delete_are_conditionally_atomic(client):
+    from medical_evals_api.database import get_session
+    from medical_evals_api.repositories.evaluations import EvaluationRepository
+    from medical_evals_api.schemas.common import TaskStatus
+
+    token = _issue_token(client, "atomic-user")
+    target_model_id = _create_model_profile(client, token, "Atomic Target")
+    completed = client.post(
+        "/api/v1/evaluations",
+        headers=_auth(token),
+        json={
+            "evaluation_definition_id": "medqa",
+            "target_model_id": target_model_id,
+            "split": "dev",
+            "sample_limit": 1,
+        },
+    )
+    running = client.post(
+        "/api/v1/evaluations",
+        headers=_auth(token),
+        json={
+            "evaluation_definition_id": "medqa",
+            "target_model_id": target_model_id,
+            "split": "dev",
+            "sample_limit": 1,
+        },
+    )
+    assert completed.status_code == 201
+    assert running.status_code == 201
+
+    session = next(get_session())
+    try:
+        repository = EvaluationRepository(session)
+        repository.set_status(completed.json()["run_id"], TaskStatus.COMPLETED)
+        repository.set_status(running.json()["run_id"], TaskStatus.RUNNING)
+
+        completed_run, changed = repository.cancel_if_active(completed.json()["run_id"])
+        assert changed is False
+        assert completed_run is not None
+        assert completed_run.status == TaskStatus.COMPLETED
+
+        outcome = repository.delete_if_not_running(running.json()["run_id"])
+        assert outcome == "conflict"
+        still_running = repository.get(running.json()["run_id"])
+        assert still_running is not None
+        assert still_running.status == TaskStatus.RUNNING
+    finally:
+        session.close()
+
+
 def _alembic_config(database_url: str) -> Config:
     backend_root = Path(__file__).resolve().parents[1]
     config = Config(str(backend_root / "alembic.ini"))

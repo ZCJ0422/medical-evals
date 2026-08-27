@@ -145,6 +145,9 @@ class Worker:
         if hasattr(self.adapter, "on_sample"):
             def record_sample(sample):
                 artifacts.upsert_sample(sample)
+                persist_sample = getattr(self.repository, "upsert_sample_result", None)
+                if persist_sample is not None:
+                    persist_sample(task_id, sample)
                 if sample.get("error"):
                     artifacts.log(f"[sample {int(sample.get('index', 0)) + 1}] failed: {sample['error']}")
                 else:

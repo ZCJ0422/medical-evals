@@ -1,6 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from medical_evals_api.auth import create_access_token
+from medical_evals_api.config import settings
 from medical_evals_api.artifacts import ArtifactWriter
 from medical_evals_api.main import app
 from medical_evals_api.repositories.tasks import TaskRepository
@@ -37,6 +39,10 @@ def _issue_token(client: TestClient, username: str) -> str:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _admin_auth() -> dict[str, str]:
+    return {"Authorization": f"Bearer {create_access_token(settings.fixed_admin_username)}"}
 
 
 def _create_model_profile(client: TestClient, token: str, name: str) -> str:
@@ -103,6 +109,17 @@ def _finalize_run(run_id: str, artifact_dir) -> None:
             request_success_count=3,
             parse_failed_count=0,
         )
+        for index in range(3):
+            repo.upsert_sample_result(
+                run_id,
+                {
+                    "index": index,
+                    "sample_id": f"sample-{index}",
+                    "question": f"Question {index}",
+                    "raw_output": f"raw answer {index}",
+                    "judge": {"verdict": "pass"},
+                },
+            )
         repo.set_status(run_id, TaskStatus.COMPLETED)
     finally:
         session.close()
@@ -187,6 +204,13 @@ def test_v1_summary_samples_and_artifacts_are_owner_scoped_and_paginated(client,
         assert response.status_code == 404
         assert response.json()["error"]["code"] in {"evaluation_run_not_found", "artifact_not_found"}
         assert response.json()["error"]["request_id"]
+
+    admin_summary = client.get(
+        f"/api/v1/evaluations/{run_id}/summary",
+        headers=_admin_auth(),
+    )
+    assert admin_summary.status_code == 200
+    assert admin_summary.json()["run_id"] == run_id
 
 
 def test_v1_sample_pagination_validation_uses_error_envelope(client):
