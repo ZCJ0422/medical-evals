@@ -142,6 +142,55 @@ def _finalize_run(run_id: str, artifact_dir) -> None:
     report_path.write_text("<html><body>report</body></html>", encoding="utf-8")
 
 
+def _finalize_run_with_artifact_only_samples(run_id: str, artifact_dir) -> None:
+    from medical_evals_api.database import get_session
+    from medical_evals_api.repositories.evaluations import EvaluationRepository
+
+    session = next(get_session())
+    try:
+        repo = EvaluationRepository(session, artifact_dir)
+        repo.update_progress(
+            run_id,
+            TaskProgress(
+                completed_count=3,
+                total_count=3,
+                progress_percent=100,
+                success_count=3,
+                failed_count=0,
+                retry_count=1,
+                stage="completed",
+            ),
+        )
+        repo.save_result(
+            run_id,
+            total_score=0.75,
+            dimension_scores={"accuracy": 0.75},
+            error_categories={"timeout": 1},
+            completed_count=3,
+            failed_count=0,
+            retry_count=1,
+            accuracy=0.75,
+            parse_success_rate=1.0,
+            request_success_count=3,
+            parse_failed_count=0,
+        )
+        repo.set_status(run_id, TaskStatus.COMPLETED)
+    finally:
+        session.close()
+
+    writer = ArtifactWriter(artifact_dir, run_id)
+    for index in range(3):
+        writer.upsert_sample(
+            {
+                "index": index,
+                "sample_id": f"artifact-sample-{index}",
+                "question": f"Artifact Question {index}",
+                "raw_output": f"artifact raw answer {index}",
+                "judge": {"verdict": "pass"},
+            }
+        )
+
+
 def test_public_summary_contains_aggregates_only(tmp_path):
     repo = TaskRepository(tmp_path / "tasks.sqlite3")
     task = repo.create(
@@ -229,3 +278,33 @@ def test_v1_sample_pagination_validation_uses_error_envelope(client):
     assert payload["code"] == "invalid_request"
     assert payload["message"] == "Invalid pagination"
     assert payload["request_id"]
+
+
+def test_v1_samples_fall_back_to_artifact_jsonl_when_db_rows_are_absent(client, tmp_path):
+    token = _issue_token(client, "alice")
+    model_id = _create_model_profile(client, token, "primary")
+    run_id = _create_run(client, token, model_id)
+    artifact_dir = tmp_path / "artifacts"
+    _finalize_run_with_artifact_only_samples(run_id, artifact_dir)
+
+    response = client.get(
+        f"/api/v1/evaluations/{run_id}/samples",
+        headers=_auth(token),
+        params={"offset": 1, "limit": 1},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert payload["offset"] == 1
+    assert payload["limit"] == 1
+    assert payload["has_more"] is True
+    assert payload["samples"] == [
+        {
+            "index": 1,
+            "sample_id": "artifact-sample-1",
+            "question": "Artifact Question 1",
+            "raw_output": "artifact raw answer 1",
+            "judge": {"verdict": "pass"},
+        }
+    ]

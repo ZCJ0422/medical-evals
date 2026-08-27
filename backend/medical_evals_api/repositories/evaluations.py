@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,33 @@ def _normalize_datetime(value: datetime | None) -> datetime | None:
     if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _read_sample_artifact_page(
+    path: Path,
+    *,
+    offset: int,
+    limit: int,
+) -> tuple[list[dict], int]:
+    if not path.exists():
+        return [], 0
+    records: list[dict] = []
+    total = 0
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(value, dict):
+                continue
+            if total >= offset and len(records) < limit:
+                records.append(value)
+            total += 1
+    return records, total
 
 
 class EvaluationRepository:
@@ -744,7 +772,11 @@ class EvaluationRepository:
             ).scalar_one()
         )
         if total == 0:
-            return [], 0
+            return _read_sample_artifact_page(
+                self.artifact_root / task_id / "samples.jsonl",
+                offset=offset,
+                limit=limit,
+            )
         rows = self.session.execute(
             select(
                 evaluation_sample_results.c.artifact_refs_json,
