@@ -79,7 +79,7 @@ def test_model_profile_rejects_cross_user_access(client):
     response = client.get(f"/api/v1/models/{profile_id}", headers=_auth(bob))
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "Model profile not found"}
+    assert response.json()["error"]["message"] == "Model profile not found"
 
 
 def test_model_profile_options_allows_patch_for_browser_preflight(client):
@@ -201,7 +201,7 @@ def test_model_profile_connection_test_sanitizes_provider_errors(client, monkeyp
     response = client.post(f"/api/v1/models/{profile_id}/test", headers=_auth(token))
 
     assert response.status_code == 502
-    assert response.json() == {"detail": "Model provider rejected the connection test"}
+    assert response.json()["error"]["message"] == "Model provider rejected the connection test"
     assert "sk-test-secret" not in response.text
 
 
@@ -226,7 +226,7 @@ def test_model_profile_connection_test_sanitizes_timeout_errors(client, monkeypa
     response = client.post(f"/api/v1/models/{profile_id}/test", headers=_auth(token))
 
     assert response.status_code == 504
-    assert response.json() == {"detail": "Model provider timed out during the connection test"}
+    assert response.json()["error"]["message"] == "Model provider timed out during the connection test"
     assert "sk-test-secret" not in response.text
 
 
@@ -251,5 +251,5 @@ def test_model_profile_connection_test_sanitizes_network_errors(client, monkeypa
     response = client.post(f"/api/v1/models/{profile_id}/test", headers=_auth(token))
 
     assert response.status_code == 502
-    assert response.json() == {"detail": "Model provider could not be reached"}
+    assert response.json()["error"]["message"] == "Model provider could not be reached"
     assert "sk-test-secret" not in response.text

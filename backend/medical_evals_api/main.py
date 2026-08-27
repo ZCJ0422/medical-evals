@@ -19,7 +19,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def _uses_v1_error_envelope(request: Request) -> bool:
-    return request.url.path.startswith("/api/v1/evaluations")
+    return request.url.path.startswith("/api/v1/")
 
 
 def _request_id(request: Request) -> str:
