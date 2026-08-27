@@ -8,6 +8,7 @@ from ..auth import CurrentUser, _hash_refresh_token, hash_password, issue_token_
 from ..database import get_session
 from ..repositories.users import UserRepository
 from ..schemas.users import RefreshTokenRequest, TokenResponse, UserCredentials, UserResponse
+from ..security import rate_limit
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 v1_router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -67,22 +68,22 @@ def _logout(payload: RefreshTokenRequest, session: Session) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit("register"))])
 def register(payload: UserCredentials, session: Session = Depends(get_session)) -> TokenResponse:
     return _register(payload, session)
 
 
-@v1_router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@v1_router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit("register"))])
 def register_v1(payload: UserCredentials, session: Session = Depends(get_session)) -> TokenResponse:
     return _register(payload, session)
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse, dependencies=[Depends(rate_limit("login"))])
 def login(payload: UserCredentials, session: Session = Depends(get_session)) -> TokenResponse:
     return _login(payload, session)
 
 
-@v1_router.post("/login", response_model=TokenResponse)
+@v1_router.post("/login", response_model=TokenResponse, dependencies=[Depends(rate_limit("login"))])
 def login_v1(payload: UserCredentials, session: Session = Depends(get_session)) -> TokenResponse:
     return _login(payload, session)
 

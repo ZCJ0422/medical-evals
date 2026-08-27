@@ -9,6 +9,7 @@ from ..schemas.model_profiles import (
     ModelProfilePublic,
     ModelProfileUpdate,
 )
+from ..security import rate_limit
 from ..services.model_profiles import (
     ModelProfileConnectionTestError,
     ModelProfileNotFoundError,
@@ -83,7 +84,7 @@ def delete_model_profile(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/{profile_id}/test", response_model=ModelConnectionTestResult)
+@router.post("/{profile_id}/test", response_model=ModelConnectionTestResult, dependencies=[Depends(rate_limit("model-test"))])
 def test_model_profile(
     profile_id: str,
     user: CurrentUser,

@@ -12,6 +12,7 @@ from ..openai_compatible import OpenAICompatibleClient
 from ..repositories.model_profiles import ModelProfileRepository
 from ..schemas.model_profiles import ModelProfileCreate, ModelProfilePublic, ModelProfileUpdate
 from ..secrets import decrypt_secret, encrypt_secret
+from ..security import validate_public_base_url
 
 
 class ModelProfileValidationError(ValueError):
@@ -45,12 +46,10 @@ def _normalize_non_empty(value: str, *, field_name: str) -> str:
 
 def _normalize_base_url(value: str) -> str:
     normalized = _normalize_non_empty(value, field_name="Base URL").rstrip("/")
-    parsed = urlparse(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ModelProfileValidationError("Base URL must be a complete http:// or https:// URL")
-    if parsed.username is not None or parsed.password is not None:
-        raise ModelProfileValidationError("Base URL must not include embedded credentials")
-    return normalized
+    try:
+        return str(validate_public_base_url(normalized)).rstrip("/")
+    except ValueError as exc:
+        raise ModelProfileValidationError(str(exc)) from exc
 
 
 def _as_public(profile: ModelProfile) -> ModelProfilePublic:
