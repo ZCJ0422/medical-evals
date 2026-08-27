@@ -61,3 +61,21 @@ class RubricSummary(BaseModel):
     rubric_id: str
     name: str
     version: str
+
+
+class ApiErrorDetail(BaseModel):
+    code: str
+    message: str
+    request_id: str
+
+
+class ApiErrorEnvelope(BaseModel):
+    error: ApiErrorDetail
+
+
+class ApiError(Exception):
+    def __init__(self, status_code: int, code: str, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message

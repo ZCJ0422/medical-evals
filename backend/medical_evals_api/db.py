@@ -2,6 +2,8 @@ import sqlite3
 from pathlib import Path
 
 
+# Legacy SQLite bootstrap for the pre-PostgreSQL task repository.
+# New API and worker database code should use `medical_evals_api.database`.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
   task_id TEXT PRIMARY KEY,

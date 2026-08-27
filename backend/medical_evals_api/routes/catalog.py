@@ -1,9 +1,14 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from ..auth import AdminIdentity, require_admin
+from ..auth import AdminIdentity, CurrentUser, require_admin
+from ..database import get_session
+from ..repositories.evaluations import EvaluationRepository
 from ..schemas.common import DatasetVersionSummary
+from ..schemas.evaluations import EvaluationDefinitionResponse, EvaluationDefinitionSplitResponse
 
 router = APIRouter(prefix="/api", tags=["catalog"])
+v1_router = APIRouter(prefix="/api/v1", tags=["catalog"])
 
 DATASETS = [
     DatasetVersionSummary(dataset_version_id="medical-medqa.dev.v1", dataset_id="medical-medqa", rubric_id="medical-medqa.default", name="MedQA", version="dev.v1", sample_count=3425),
@@ -17,3 +22,29 @@ DATASETS = [
 @router.get("/datasets", response_model=list[DatasetVersionSummary])
 def list_datasets(_: AdminIdentity = Depends(require_admin)) -> list[DatasetVersionSummary]:
     return DATASETS
+
+
+@v1_router.get("/datasets", response_model=list[EvaluationDefinitionResponse])
+def list_datasets_v1(
+    _: CurrentUser,
+    session: Session = Depends(get_session),
+) -> list[EvaluationDefinitionResponse]:
+    repository = EvaluationRepository(session)
+    return [
+        EvaluationDefinitionResponse(
+            id=definition.id,
+            name=definition.name,
+            requires_judge=definition.requires_judge,
+            splits=[
+                EvaluationDefinitionSplitResponse(
+                    id=split.id,
+                    dataset_version_id=split.dataset_version_id,
+                    version=split.version,
+                    sample_count=split.sample_count,
+                    default_sample_limit=split.default_sample_limit,
+                )
+                for split in definition.splits
+            ],
+        )
+        for definition in repository.list_definitions()
+    ]

@@ -1,4 +1,12 @@
+from __future__ import annotations
+
+from datetime import datetime
+from enum import Enum
+from typing import Any
+
 from pydantic import BaseModel, Field
+
+from .common import TaskProgress, TaskStatus
 
 
 class EvaluationCreate(BaseModel):
@@ -14,6 +22,60 @@ class EvaluationCreate(BaseModel):
     judge_api_key: str = ""
     judge_api_key_env: str = Field(default="", max_length=128)
     max_samples: int | None = Field(default=None, ge=1, le=10000)
+
+
+class EvaluationDefinitionSplitResponse(BaseModel):
+    id: str
+    dataset_version_id: str
+    version: str
+    sample_count: int
+    default_sample_limit: int
+
+
+class EvaluationDefinitionResponse(BaseModel):
+    id: str
+    name: str
+    requires_judge: bool
+    splits: list[EvaluationDefinitionSplitResponse]
+
+
+class EvaluationRunCreate(BaseModel):
+    name: str = Field(default="", max_length=120)
+    evaluation_definition_id: str
+    target_model_id: str
+    judge_model_id: str = ""
+    split: str | None = None
+    sample_limit: int | None = Field(default=None, ge=1, le=10000)
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class EvaluationRunStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    CANCELLED = "cancelled"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class EvaluationRunResponse(BaseModel):
+    run_id: str
+    name: str
+    evaluation_definition_id: str
+    target_model_id: str
+    judge_model_id: str
+    dataset_version_id: str
+    status: EvaluationRunStatus
+    progress: TaskProgress
+    split: str
+    sample_limit: int | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+    queued_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    retry_of_run_id: str | None = None
+    error: str | None = None
 
 
 class PreflightResponse(BaseModel):

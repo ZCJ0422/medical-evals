@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-medical_evals}
+      POSTGRES_USER: ${POSTGRES_USER:-medical_evals}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - medical-evals-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - medical-evals-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    env_file: .env
+    environment:
+      MEDICAL_EVALS_DATABASE_URL: postgresql+psycopg://$${POSTGRES_USER:-medical_evals}:$${POSTGRES_PASSWORD}@postgres:5432/$${POSTGRES_DB:-medical_evals}
+      MEDICAL_EVALS_REDIS_URL: redis://redis:6379/0
+    command: ["sh", "-c", "python -m medical_evals_api.cli init-db && python -m medical_evals_api.cli api"]
+    ports: ["8000:8000"]
+    volumes:
+      - medical-evals-artifacts:/app/backend/data/artifacts
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    env_file: .env
+    environment:
+      MEDICAL_EVALS_DATABASE_URL: postgresql+psycopg://$${POSTGRES_USER:-medical_evals}:$${POSTGRES_PASSWORD}@postgres:5432/$${POSTGRES_DB:-medical_evals}
+      MEDICAL_EVALS_REDIS_URL: redis://redis:6379/0
+    command: ["python", "-m", "medical_evals_api.cli", "worker"]
+    volumes:
+      - medical-evals-artifacts:/app/backend/data/artifacts
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+volumes:
+  medical-evals-postgres:
+  medical-evals-redis:
+  medical-evals-artifacts:

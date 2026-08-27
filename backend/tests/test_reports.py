@@ -17,8 +17,15 @@ def test_html_report_is_written_under_task_artifacts(tmp_path):
 def test_report_route_rejects_unregistered_artifact(tmp_path, monkeypatch):
     database_path = tmp_path / "tasks.sqlite3"
     artifact_dir = tmp_path / "artifacts"
+    from medical_evals_api import config
+    import medical_evals_api.database as database
+
     monkeypatch.setattr(settings, "database_path", database_path)
+    monkeypatch.setattr(config.settings, "database_url", f"sqlite+pysqlite:///{database_path}")
     monkeypatch.setattr(settings, "artifact_dir", artifact_dir)
+    database._build_engine.cache_clear()
+    database._build_session_factory.cache_clear()
+    database._build_redis.cache_clear()
     unregistered_report = artifact_dir / "not-a-task" / "report.html"
     unregistered_report.parent.mkdir(parents=True)
     unregistered_report.write_text("should not be served", encoding="utf-8")

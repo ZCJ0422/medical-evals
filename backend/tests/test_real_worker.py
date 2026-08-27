@@ -7,6 +7,7 @@ from medical_evals_api.artifacts import ArtifactWriter
 from medical_evals_api.evaluator_adapter import OpenAICompatibleEvaluationAdapter
 from medical_evals_api.models import EvaluationTask
 from medical_evals_api.openai_compatible import OpenAICompatibleClient
+from medical_evals_api.queue import QueueClaim
 from medical_evals_api.repositories.tasks import TaskRepository
 from medical_evals_api.schemas.common import TaskStatus
 from medical_evals_api.worker import Worker
@@ -73,6 +74,18 @@ class CapturingEnvironmentClient:
         return None
 
 
+class AckTrackingQueue:
+    def __init__(self):
+        self.heartbeats = []
+        self.acked = []
+
+    def heartbeat(self, claim: QueueClaim) -> None:
+        self.heartbeats.append(claim)
+
+    def ack(self, claim: QueueClaim) -> None:
+        self.acked.append(claim)
+
+
 def test_worker_resolves_environment_backed_key_at_client_boundary(tmp_path, monkeypatch):
     monkeypatch.setenv("MEDICAL_EVALS_TEST_TARGET_KEY", "worker-env-key")
     CapturingEnvironmentClient.instances = []
@@ -99,6 +112,41 @@ def test_worker_resolves_environment_backed_key_at_client_boundary(tmp_path, mon
     client = CapturingEnvironmentClient.instances[0]
     assert client.base_url == "https://target.test/v1"
     assert client.api_key == "worker-env-key"
+
+
+def test_real_worker_acks_queue_claim_after_durable_completion(tmp_path):
+    repo = TaskRepository(tmp_path / "tasks.sqlite3")
+    task = repo.create(
+        name="queue-acked smoke",
+        target_model_id="target",
+        judge_model_id="judge",
+        dataset_version_id="medical-medqa.dev.v1",
+        rubric_id="medical-medqa.default",
+        max_samples=1,
+        target_base_url="https://target.test/v1",
+        target_api_key_env="TARGET_KEY",
+        judge_base_url="https://judge.test/v1",
+        judge_api_key_env="JUDGE_KEY",
+    )
+    repo.claim_next("worker-a", lease_seconds=60)
+    queue = AckTrackingQueue()
+    claim = QueueClaim(run_id=task.task_id, message_id="1-0", consumer="worker-a")
+    worker = Worker(
+        repo,
+        adapter=OpenAICompatibleEvaluationAdapter(
+            target_client=FakeClient(),
+            judge_client=FakeClient(),
+        ),
+        worker_id="worker-a",
+        lease_seconds=60,
+    )
+    worker.queue = queue
+
+    result = worker.run_task(task.task_id, claim)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert queue.heartbeats
+    assert queue.acked == [claim]
 
 
 def test_worker_runs_medqa_with_openai_compatible_adapter(tmp_path):
