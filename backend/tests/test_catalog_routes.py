@@ -73,3 +73,6 @@ def test_v1_routes_remain_visible_in_openapi(client):
     assert "/api/v1/datasets" in paths
     assert "/api/v1/evaluations" in paths
     assert "/api/v1/evaluations/{run_id}" in paths
+    assert "/api/v1/evaluations/{run_id}/summary" in paths
+    assert "/api/v1/evaluations/{run_id}/samples" in paths
+    assert "/api/v1/evaluations/{run_id}/artifacts" in paths

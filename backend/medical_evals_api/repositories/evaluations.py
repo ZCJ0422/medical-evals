@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import delete, insert, select, update
@@ -276,24 +277,43 @@ class EvaluationRepository:
         ).mappings().first()
         return self._build_run(row) if row is not None else None
 
-    def list(self) -> list[EvaluationRun]:
-        rows = self.session.execute(
-            select(evaluation_runs).order_by(
-                evaluation_runs.c.created_at.desc(),
-                evaluation_runs.c.id.desc(),
-            )
-        ).mappings()
+    def _apply_list_filters(self, stmt, filters: dict[str, Any] | None):
+        if not filters:
+            return stmt
+        status_values = filters.get("status_values")
+        if status_values:
+            stmt = stmt.where(evaluation_runs.c.status.in_(tuple(status_values)))
+        created_after = filters.get("created_after")
+        if created_after is not None:
+            stmt = stmt.where(evaluation_runs.c.created_at >= created_after)
+        created_before = filters.get("created_before")
+        if created_before is not None:
+            stmt = stmt.where(evaluation_runs.c.created_at <= created_before)
+        limit = filters.get("limit")
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        offset = filters.get("offset")
+        if offset:
+            stmt = stmt.offset(offset)
+        return stmt
+
+    def list(self, filters: dict[str, Any] | None = None) -> list[EvaluationRun]:
+        stmt = select(evaluation_runs).order_by(
+            evaluation_runs.c.created_at.desc(),
+            evaluation_runs.c.id.desc(),
+        )
+        stmt = self._apply_list_filters(stmt, filters)
+        rows = self.session.execute(stmt).mappings()
         return [self._build_run(row) for row in rows]
 
-    def list_owned(self, user_id: str, filters: dict | None = None) -> list[EvaluationRun]:
+    def list_owned(self, user_id: str, filters: dict[str, Any] | None = None) -> list[EvaluationRun]:
         stmt = select(evaluation_runs).where(
             evaluation_runs.c.user_id == user_id
         ).order_by(
             evaluation_runs.c.created_at.desc(),
             evaluation_runs.c.id.desc(),
         )
-        if filters and filters.get("status"):
-            stmt = stmt.where(evaluation_runs.c.status == filters["status"])
+        stmt = self._apply_list_filters(stmt, filters)
         rows = self.session.execute(stmt).mappings()
         return [self._build_run(row) for row in rows]
 

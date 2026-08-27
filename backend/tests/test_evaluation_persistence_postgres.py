@@ -188,7 +188,9 @@ def test_cross_user_evaluation_run_access_is_rejected(client):
     response = client.get(f"/api/v1/evaluations/{run_id}", headers=_auth(bob))
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "Evaluation run not found"}
+    assert response.json()["error"]["code"] == "evaluation_run_not_found"
+    assert response.json()["error"]["message"] == "Evaluation run not found"
+    assert response.json()["error"]["request_id"]
 
 
 def test_legacy_fixed_admin_token_uses_persisted_user_for_v1_resources(client):

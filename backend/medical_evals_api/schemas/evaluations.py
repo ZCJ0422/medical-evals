@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -48,6 +49,14 @@ class EvaluationRunCreate(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
+class EvaluationRunStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    CANCELLED = "cancelled"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 class EvaluationRunResponse(BaseModel):
     run_id: str
     name: str
@@ -55,13 +64,17 @@ class EvaluationRunResponse(BaseModel):
     target_model_id: str
     judge_model_id: str
     dataset_version_id: str
-    status: TaskStatus
+    status: EvaluationRunStatus
     progress: TaskProgress
     split: str
     sample_limit: int | None = None
     config: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
+    queued_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    retry_of_run_id: str | None = None
     error: str | None = None
 
 
