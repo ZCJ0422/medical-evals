@@ -1,0 +1,7 @@
+"use client";
+import Link from "next/link";
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { register } from "../../lib/auth";
+import { ActivityIcon } from "../../components/icons";
+export default function RegisterPage() { const router = useRouter(); const [error, setError] = useState(""); const [busy, setBusy] = useState(false); async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(""); const form = new FormData(event.currentTarget); try { await register(String(form.get("username")), String(form.get("password"))); router.replace("/portal"); } catch (cause) { setError(cause instanceof Error ? cause.message : "注册失败，请重试。"); } finally { setBusy(false); } } return <main className="public-auth-page auth-page"><Link className="auth-brand" href="/"><span className="auth-brand-mark"><ActivityIcon size={25} /></span><span>Medical Evals</span></Link><form className="form card auth-card" onSubmit={submit}><h1>注册</h1><label>用户名<input name="username" required minLength={3} autoComplete="username" /></label><label>密码<input name="password" type="password" required minLength={8} autoComplete="new-password" /></label>{error && <p className="error" role="alert">{error}</p>}<button className="action" type="submit" disabled={busy}>{busy ? "注册中…" : "注册"}</button><p className="hint">已有账户？ <Link href="/login">登录</Link></p></form></main>; }

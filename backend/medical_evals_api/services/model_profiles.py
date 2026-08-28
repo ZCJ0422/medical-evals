@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import httpx
+from medical_evals.core.openai_compatible import EmptyCompletionError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -151,6 +152,11 @@ class ModelProfileService:
         except httpx.RequestError as exc:
             raise ModelProfileConnectionTestError(
                 "Model provider could not be reached",
+                status_code=502,
+            ) from exc
+        except EmptyCompletionError as exc:
+            raise ModelProfileConnectionTestError(
+                "Model provider returned an invalid or empty completion response",
                 status_code=502,
             ) from exc
         finally:

@@ -12,5 +12,5 @@ export function EvaluationFilters({ query, status, onQueryChange, onStatusChange
 
 export function filterTasks(tasks: import("../lib/types").TaskSummary[], query: string, status: "all" | TaskStatus) {
   const needle = query.trim().toLowerCase();
-  return tasks.filter((task) => (status === "all" || task.status === status) && (!needle || [task.name, task.target_model_id, task.judge_model_id, task.dataset_version_id, task.task_id].some((value) => value.toLowerCase().includes(needle))));
+  return tasks.filter((task) => (status === "all" || task.status === status) && (!needle || [task.name, task.target_model_id, task.judge_model_id, task.dataset_version_id, task.run_id].some((value) => value.toLowerCase().includes(needle))));
 }

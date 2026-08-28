@@ -65,7 +65,7 @@ app = FastAPI(title="Medical Evals API", version="0.1.0", lifespan=lifespan)
 logger = logging.getLogger("medical_evals_api.request")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin, "http://127.0.0.1:3000"],
+    allow_origins=[settings.frontend_origin, "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],

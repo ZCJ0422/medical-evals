@@ -13,7 +13,7 @@ import { useLocale } from "../../lib/i18n";
 export default function DashboardPage() {
   const { t } = useLocale();
   const [tasks, setTasks] = useState<TaskSummary[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
-  useEffect(() => { let active = true; const load = () => api<TaskSummary[]>("/api/evaluations").then((items) => { if (active) { setTasks(items); setLoading(false); } }).catch(() => { if (active) { setError("Unable to load dashboard activity. Retry from Evaluations."); setLoading(false); } }); load(); const timer = window.setInterval(load, 5000); return () => { active = false; window.clearInterval(timer); }; }, []);
+  useEffect(() => { let active = true; const load = () => api<TaskSummary[]>("/api/v1/evaluations?limit=200").then((items) => { if (active) { setTasks(items); setLoading(false); } }).catch(() => { if (active) { setError("Unable to load dashboard activity. Retry from Evaluations."); setLoading(false); } }); load(); const timer = window.setInterval(() => { if (document.visibilityState === "visible") load(); }, 5000); return () => { active = false; window.clearInterval(timer); }; }, []);
   return (
     <main className="shell" aria-labelledby="page-title">
       <PageHeader eyebrow={t("adminWorkbench")} title={t("controlRoom")} description={t("controlLead")} action={<Link className="action" href="/app/evaluations/new"><PlusIcon size={17} />{t("newEvaluation")}</Link>} />

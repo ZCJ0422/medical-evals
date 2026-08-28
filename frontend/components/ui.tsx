@@ -5,7 +5,7 @@ import { useLocale } from "../lib/i18n";
 
 export function StatusBadge({ status }: { status: TaskStatus | string }) {
   const { t } = useLocale();
-  const labels: Record<string, string> = { queued: t("queuedStatus"), running: t("runningStatus"), completed: t("completedStatus"), partial_failed: t("partialFailedStatus"), failed: t("failedStatus"), cancelled: t("cancelledStatus") };
+  const labels: Record<string, string> = { queued: t("queuedStatus"), running: t("runningStatus"), succeeded: t("completedStatus"), completed: t("completedStatus"), partial_failed: t("partialFailedStatus"), failed: t("failedStatus"), cancelled: t("cancelledStatus") };
   const label = labels[status] ?? status.replaceAll("_", " ");
   return <span className={`status status-${status}`} role="img" aria-label={label} title={label}><span className="status-dot" aria-hidden="true" /></span>;
 }

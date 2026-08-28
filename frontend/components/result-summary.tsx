@@ -4,7 +4,8 @@ import { ScoreBars } from "./score-bars";
 import { useLocale } from "../lib/i18n";
 
 export type ResultSummary = {
-  task_id: string;
+  task_id?: string;
+  run_id?: string;
   name: string;
   status: string;
   dataset_version_id: string;
@@ -13,8 +14,8 @@ export type ResultSummary = {
   created_at: string;
   updated_at: string;
   error: string | null;
-  stage: string;
-  progress_percent: number;
+  stage?: string;
+  progress_percent?: number;
   total_score: number;
   dimension_scores: Record<string, number>;
   accuracy: number;
@@ -34,7 +35,7 @@ export function ResultSummaryView({ summary, runLog, onCopyLog, onDownloadLog, f
   const errorEntries = Object.entries(summary.error_categories);
   const parseValue = summary.parse_success_rate === null ? "—" : `${(summary.parse_success_rate * 100).toFixed(1)}%`;
   const isRubricBased = typeof summary.dimension_scores.rubric_score === "number";
-  const stage = t(stageKey[summary.stage] ?? "stagePreparing");
+  const stage = t(stageKey[summary.stage ?? ""] ?? "stagePreparing");
   const updatedAt = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(summary.updated_at));
   return <>
     <div className="result-heading"><div><p className="eyebrow">{t("evaluationResults")}</p><h1>{summary.name}</h1><p className="task-id">Task {summary.task_id}</p></div><div className="result-heading-actions"><StatusBadge status={summary.status} />{action}</div></div>

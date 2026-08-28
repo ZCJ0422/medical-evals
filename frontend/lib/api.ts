@@ -1,27 +1,16 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = typeof window === "undefined" ? null : window.sessionStorage.getItem("medical_evals_token");
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init.headers ?? {}) } });
-  if (!response.ok) throw new Error(await response.text());
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
-}
-
-export async function apiBlob(path: string): Promise<Blob> {
-  const token = typeof window === "undefined" ? null : window.sessionStorage.getItem("medical_evals_token");
-  const response = await fetch(`${API_BASE}${path}`, { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
-  if (!response.ok) throw new Error(await response.text());
-  return response.blob();
-}
-
-export async function apiText(path: string): Promise<string> {
-  const token = typeof window === "undefined" ? null : window.sessionStorage.getItem("medical_evals_token");
-  const response = await fetch(`${API_BASE}${path}`, { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
-  if (!response.ok) throw new Error(await response.text());
-  return response.text();
-}
-
-export function saveToken(token: string) { window.sessionStorage.setItem("medical_evals_token", token); }
-export function clearToken() { window.sessionStorage.removeItem("medical_evals_token"); }
-export function hasToken() { return Boolean(window.sessionStorage.getItem("medical_evals_token")); }
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
+const ACCESS = "medical_evals_access_token"; const REFRESH = "medical_evals_refresh_token";
+function storage() { return typeof window === "undefined" ? null : window.sessionStorage; }
+function token(key: string) { return storage()?.getItem(key) ?? null; }
+function clearSession() { storage()?.removeItem(ACCESS); storage()?.removeItem(REFRESH); window.dispatchEvent(new Event("medical-evals:session-expired")); }
+export class ApiError extends Error { constructor(public status: number, message: string, public code?: string, public requestId?: string, public fieldErrors?: Record<string, string>) { super(message); this.name = "ApiError"; } }
+export function saveTokens(accessToken: string, refreshToken: string) { storage()?.setItem(ACCESS, accessToken); storage()?.setItem(REFRESH, refreshToken); }
+export function saveToken(value: string) { storage()?.setItem(ACCESS, value); }
+export function clearToken() { storage()?.removeItem(ACCESS); storage()?.removeItem(REFRESH); }
+export function hasToken() { return Boolean(token(ACCESS)); }
+export function getRefreshToken() { return token(REFRESH); }
+async function readError(response: Response): Promise<ApiError> { let data: any = null; try { data = await response.json(); } catch { /* non-json */ } const detail = data?.error ?? data?.detail; const message = typeof detail === "string" ? detail : detail?.message; const requestId = detail?.request_id; const fallback = response.status === 401 ? "Your session has expired. Please sign in again." : response.status === 403 ? "You do not have permission to perform this action." : response.status === 404 ? "The requested resource was not found." : response.status === 409 ? "This action conflicts with the current resource state." : response.status === 422 ? "Please check the highlighted fields." : "The service is temporarily unavailable. Please try again."; return new ApiError(response.status, `${message || fallback}${requestId ? ` (Request ID: ${requestId})` : ""}`, detail?.code, requestId); }
+async function refresh() { const refreshToken = getRefreshToken(); if (!refreshToken) return false; const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: refreshToken }) }); if (!response.ok) return false; const data = await response.json(); saveTokens(data.access_token, data.refresh_token); return true; }
+export async function api<T>(path: string, init: RequestInit = {}, canRefresh = true): Promise<T> { const headers = new Headers(init.headers); if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json"); const access = token(ACCESS); if (access) headers.set("Authorization", `Bearer ${access}`); let response: Response; try { response = await fetch(`${API_BASE}${path}`, { ...init, headers }); } catch { throw new ApiError(0, "无法连接 API 服务，请先启动后端服务。"); } if (response.status === 401 && canRefresh && await refresh()) return api<T>(path, init, false); if (response.status === 401) { clearSession(); throw await readError(response); } if (!response.ok) throw await readError(response); if (response.status === 204) return undefined as T; return response.json() as Promise<T>; }
+export async function apiBlob(path: string) { const response = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token(ACCESS)}` } }); if (!response.ok) throw await readError(response); return response.blob(); }
+export async function apiText(path: string) { const response = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token(ACCESS)}` } }); if (!response.ok) throw await readError(response); return response.text(); }

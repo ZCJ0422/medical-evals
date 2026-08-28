@@ -1,23 +1,13 @@
-export type TaskStatus = "queued" | "running" | "completed" | "partial_failed" | "failed" | "cancelled";
-
-export type TaskSummary = {
-  task_id: string;
-  name: string;
-  target_model_id: string;
-  judge_model_id: string;
-  dataset_version_id: string;
-  status: TaskStatus;
-  progress: { completed_count: number; total_count: number; progress_percent: number; success_count: number; failed_count: number; retry_count: number; stage: string };
-  created_at?: string | null;
-  updated_at?: string | null;
-  error?: string | null;
-};
-
-export type DatasetVersion = {
-  dataset_version_id: string;
-  dataset_id: string;
-  rubric_id: string;
-  name: string;
-  version: string;
-  sample_count: number;
-};
+export type User = { username: string; role: "user" | "admin" | string; status: string };
+export type TokenResponse = { access_token: string; refresh_token: string; token_type: string; user: User };
+export type EvaluationStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "completed" | "partial_failed";
+export type TaskStatus = EvaluationStatus;
+export type TaskProgress = { completed_count: number; total_count: number; progress_percent: number; success_count: number; failed_count: number; retry_count: number; stage: string };
+export type EvaluationDefinitionSplit = { id: string; dataset_version_id: string; version: string; sample_count: number; default_sample_limit: number };
+export type EvaluationDefinition = { id: string; name: string; requires_judge: boolean; splits: EvaluationDefinitionSplit[] };
+export type ModelProfile = { id: string; name: string; base_url: string; model_name: string; has_api_key: boolean; is_active: boolean; created_at: string; updated_at: string };
+export type EvaluationRun = { run_id: string; task_id?: string; name: string; evaluation_definition_id: string; target_model_id: string; judge_model_id: string; dataset_version_id: string; status: EvaluationStatus; progress: TaskProgress; split: string; sample_limit: number | null; config: Record<string, unknown>; created_at: string; updated_at: string; queued_at: string; started_at: string | null; finished_at: string | null; retry_of_run_id: string | null; error: string | null };
+export type TaskSummary = EvaluationRun;
+export type EvaluationSummary = EvaluationRun & { total_score: number; dimension_scores: Record<string, number>; accuracy: number; parse_success_rate: number | null; request_success_count: number; parse_failed_count: number; error_categories: Record<string, number>; completed_count: number; failed_count: number; retry_count: number };
+export type EvaluationSamplesResponse = { run_id: string; offset: number; limit: number; total: number; has_more: boolean; samples: Array<Record<string, any>> };
+export type DatasetVersion = { dataset_version_id: string; dataset_id: string; rubric_id: string; name: string; version: string; sample_count: number };

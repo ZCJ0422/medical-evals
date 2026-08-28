@@ -90,8 +90,8 @@ class RedisTaskQueue:
         if not messages:
             return None
         message_id, payload = messages[0]
-        fields = dict(payload)
-        run_id = _decode(fields.get("run_id", ""))
+        fields = {_decode(key): _decode(value) for key, value in dict(payload).items()}
+        run_id = fields.get("run_id", "")
         if not run_id:
             return None
         return QueueClaim(
