@@ -39,7 +39,8 @@ def create_model_profile(
     session: Session = Depends(get_session),
 ) -> ModelProfilePublic:
     try:
-        return _service(session).create(user.id, payload)
+        service = _service(session)
+        return service.create_public(user.id, payload) if user.role != "admin" else service.create(user.id, payload)
     except ModelProfileValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

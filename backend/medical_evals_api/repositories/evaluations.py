@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -129,19 +130,16 @@ class EvaluationRepository:
             self.session.commit()
 
     def list_definitions(self) -> list[EvaluationDefinition]:
-        enabled = {
-            row.id
-            for row in self.session.execute(
-                select(evaluation_definitions.c.id).where(
-                    evaluation_definitions.c.is_enabled.is_(True)
-                )
-            ).mappings()
-        }
-        return [
-            definition
-            for definition in list_builtin_evaluation_definitions()
-            if definition.id in enabled
-        ]
+        rows = self.session.execute(
+            select(evaluation_definitions).where(evaluation_definitions.c.is_enabled.is_(True))
+        ).mappings()
+        configured = {row["id"]: row for row in rows}
+        definitions = []
+        for definition in list_builtin_evaluation_definitions():
+            row = configured.get(definition.id)
+            if row is not None:
+                definitions.append(replace(definition, default_config=dict(row["default_config_json"] or {})))
+        return definitions
 
     def get_definition(self, definition_id: str) -> EvaluationDefinition | None:
         row = self.session.execute(
@@ -152,7 +150,40 @@ class EvaluationRepository:
         ).mappings().first()
         if row is None:
             return None
-        return get_builtin_evaluation_definition(definition_id)
+        definition = get_builtin_evaluation_definition(definition_id)
+        return replace(definition, default_config=dict(row["default_config_json"] or {})) if definition else None
+
+    def update_definition_config(
+        self,
+        definition_id: str,
+        *,
+        default_split: str,
+        default_sample_limit: int,
+        judge_model_id: str | None,
+    ) -> EvaluationDefinition | None:
+        definition = get_builtin_evaluation_definition(definition_id)
+        if definition is None or get_definition_split(definition_id, default_split) is None:
+            return None
+        if definition.requires_judge and not judge_model_id:
+            raise ValueError("Judge model profile is required for this dataset")
+        if default_sample_limit > get_definition_split(definition_id, default_split).sample_count:
+            raise ValueError("Sample limit cannot exceed the selected dataset sample count")
+        config = {
+            "default_split": default_split,
+            "default_sample_limit": default_sample_limit,
+            "judge_model_profile_id": judge_model_id,
+        }
+        self.session.execute(
+            update(evaluation_definitions)
+            .where(evaluation_definitions.c.id == definition_id)
+            .values(
+                dataset_version=get_definition_split(definition_id, default_split).dataset_version_id,
+                default_config_json=config,
+                updated_at=_utcnow(),
+            )
+        )
+        self.session.commit()
+        return replace(definition, default_config=config)
 
     def _profile_for_user(self, profile_id: str, user_id: str):
         return self.session.execute(
@@ -220,18 +251,24 @@ class EvaluationRepository:
         definition = self.get_definition(command.evaluation_definition_id)
         if definition is None:
             raise KeyError("evaluation_definition")
-        split = get_definition_split(definition.id, command.split)
+        configured_split = definition.default_config.get("default_split")
+        split = get_definition_split(definition.id, command.split or configured_split)
         if split is None:
             raise KeyError("split")
         target_profile = self._profile_for_user(command.target_model_profile_id, user_id)
         if target_profile is None:
             raise KeyError("target_model")
         judge_profile = None
-        judge_profile_id = command.judge_model_profile_id or None
+        configured_judge_id = definition.default_config.get("judge_model_profile_id")
+        judge_profile_id = command.judge_model_profile_id or configured_judge_id or None
         if definition.requires_judge and judge_profile_id is None:
             raise ValueError("Judge model profile is required")
         if judge_profile_id is not None:
             judge_profile = self._profile_for_user(judge_profile_id, user_id)
+            if judge_profile is None and not command.judge_model_profile_id:
+                judge_profile = self.session.execute(
+                    select(model_profiles).where(model_profiles.c.id == judge_profile_id)
+                ).mappings().first()
             if judge_profile is None:
                 raise KeyError("judge_model")
             if judge_profile["id"] == target_profile["id"]:
@@ -253,7 +290,7 @@ class EvaluationRepository:
                 retry_of_run_id=command.retry_of_run_id,
                 status=TaskStatus.QUEUED.value,
                 split=split.id,
-                max_samples=command.sample_limit,
+                max_samples=command.sample_limit or definition.default_config.get("default_sample_limit") or split.default_sample_limit,
                 config_json=merged_config,
                 progress_json=progress,
                 error=None,

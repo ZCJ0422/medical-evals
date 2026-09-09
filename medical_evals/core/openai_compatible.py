@@ -49,8 +49,18 @@ def _completion_text(response: Any) -> str | None:
     for choice in choices:
         message = _field(choice, "message")
         content = _field(message, "content")
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                value = _field(part, "text")
+                if value is not None and str(value).strip():
+                    parts.append(str(value))
+            content = "".join(parts)
         if content is not None and str(content).strip():
             return str(content)
+        legacy_text = _field(choice, "text")
+        if legacy_text is not None and str(legacy_text).strip():
+            return str(legacy_text)
     return None
 
 

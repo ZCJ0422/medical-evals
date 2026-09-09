@@ -119,6 +119,7 @@ class OpenAICompatibleClient(CoreOpenAICompatibleClient):
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        options: dict[str, Any] | None = None,
         on_event: EventCallback | None = None,
     ) -> ModelResponse | str:
         if isinstance(prompt, CompletionRequest):
@@ -127,7 +128,7 @@ class OpenAICompatibleClient(CoreOpenAICompatibleClient):
         if model is None or temperature is None or max_tokens is None:
             raise TypeError("legacy completion calls require model, temperature, and max_tokens")
         response = self._complete_shared(
-            CompletionRequest(prompt, model, temperature, max_tokens),
+            CompletionRequest(prompt, model, temperature, max_tokens, options or {}),
             on_event,
         )
         return response.text

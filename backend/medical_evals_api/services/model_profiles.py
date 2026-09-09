@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from urllib.parse import urlparse
+from uuid import uuid4
 
 import httpx
 from medical_evals.core.openai_compatible import EmptyCompletionError
@@ -92,6 +93,34 @@ class ModelProfileService:
             raise ModelProfileValidationError("Model profile name already exists") from exc
         return _as_public(profile)
 
+    def create_public(self, user_id: str, payload: ModelProfileCreate) -> ModelProfilePublic:
+        """Create a submission-scoped profile without exposing name uniqueness to users."""
+        model_name = _normalize_non_empty(payload.model_name, field_name="Model name")
+        base_url = _normalize_base_url(payload.base_url)
+        api_key = _normalize_non_empty(payload.api_key, field_name="API key")
+        profile_name = model_name
+        try:
+            profile = self.repository.create(
+                user_id=user_id,
+                name=profile_name,
+                base_url=base_url,
+                model_name=model_name,
+                api_key_encrypted=encrypt_secret(api_key),
+            )
+        except IntegrityError:
+            # Model profile names are unique for administration, but a public
+            # user may submit the same model more than once. Keep each run's
+            # credentials isolated by assigning a generated internal name.
+            self.repository.session.rollback()
+            profile = self.repository.create(
+                user_id=user_id,
+                name=f"{model_name} · public · {uuid4().hex[:8]}",
+                base_url=base_url,
+                model_name=model_name,
+                api_key_encrypted=encrypt_secret(api_key),
+            )
+        return _as_public(profile)
+
     def update(self, profile_id: str, user_id: str, payload: ModelProfileUpdate) -> ModelProfilePublic:
         existing = self.repository.get_for_user(profile_id, user_id)
         if existing is None:
@@ -133,12 +162,19 @@ class ModelProfileService:
             max_retries=0,
         )
         try:
-            client.complete(
-                "ping",
-                model=credentials.model_name,
-                temperature=0,
-                max_tokens=1,
+            options = (
+                {"thinking": {"type": "disabled"}}
+                if credentials.model_name.lower().startswith("deepseek-v4")
+                else None
             )
+            completion_kwargs = {
+                "model": credentials.model_name,
+                "temperature": 0,
+                "max_tokens": 32,
+            }
+            if options is not None:
+                completion_kwargs["options"] = options
+            client.complete("ping", **completion_kwargs)
         except httpx.TimeoutException as exc:
             raise ModelProfileConnectionTestError(
                 "Model provider timed out during the connection test",

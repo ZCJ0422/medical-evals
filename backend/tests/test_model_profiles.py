@@ -51,7 +51,7 @@ def test_create_model_profile_hides_api_key_and_sets_has_api_key(client):
     body = response.json()
     assert "api_key" not in body
     assert body["has_api_key"] is True
-    assert body["name"] == "Primary"
+    assert body["name"] == "gpt-4o-mini"
     assert body["base_url"] == "https://example.test/v1"
     assert body["model_name"] == "gpt-4o-mini"
 
@@ -146,11 +146,12 @@ def test_model_profile_connection_test_returns_success_without_persisting_output
         def __init__(self, base_url: str, api_key: str, **_: object) -> None:
             calls.append((base_url, api_key))
 
-        def complete(self, prompt: str, *, model: str, temperature: float, max_tokens: int) -> str:
+        def complete(self, prompt: str, *, model: str, temperature: float, max_tokens: int, options=None) -> str:
             assert prompt == "ping"
             assert model == "gpt-4o-mini"
             assert temperature == 0
-            assert max_tokens == 1
+            assert max_tokens == 32
+            assert options is None
             return "pong"
 
         def close(self) -> None:
@@ -163,6 +164,49 @@ def test_model_profile_connection_test_returns_success_without_persisting_output
     assert response.status_code == 200
     assert response.json() == {"ok": True}
     assert calls == [("https://example.test/v1", "sk-test-secret")]
+
+
+def test_public_user_can_submit_same_model_name_more_than_once(client):
+    token = _issue_token(client, "repeat-model-user")
+    payload = _payload(model_name="deepseek-v4-flash")
+
+    first = client.post("/api/v1/models", headers=_auth(token), json=payload)
+    second = client.post("/api/v1/models", headers=_auth(token), json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["model_name"] == second.json()["model_name"] == "deepseek-v4-flash"
+    assert first.json()["name"] != second.json()["name"]
+
+
+def test_deepseek_v4_connection_test_disables_thinking(client, monkeypatch):
+    token = _issue_token(client, "deepseek-user")
+    created = client.post(
+        "/api/v1/models",
+        headers=_auth(token),
+        json=_payload(model_name="deepseek-v4-flash"),
+    )
+    assert created.status_code == 201
+    profile_id = created.json()["id"]
+    observed = {}
+
+    class FakeClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def complete(self, _prompt: str, **kwargs: object) -> str:
+            observed.update(kwargs)
+            return "pong"
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("medical_evals_api.services.model_profiles.OpenAICompatibleClient", FakeClient)
+
+    response = client.post(f"/api/v1/models/{profile_id}/test", headers=_auth(token))
+
+    assert response.status_code == 200
+    assert observed["options"] == {"thinking": {"type": "disabled"}}
 
 
 def test_model_profile_connection_test_sanitizes_provider_errors(client, monkeypatch):

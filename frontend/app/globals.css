@@ -20,6 +20,17 @@
     --ease-out: cubic-bezier(.2, .8, .2, 1);
 }
 
+.config-list { display: grid; gap: 20px; }
+.config-card { padding: 28px; }
+.config-card .section-heading { align-items: flex-start; margin-bottom: 24px; }
+.config-card h2 { margin: 4px 0 0; }
+.config-status { color: #176b5f; font-size: .82rem; font-weight: 700; letter-spacing: .04em; }
+.config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.config-grid label { display: grid; gap: 8px; font-weight: 650; }
+.config-grid input, .config-grid select { width: 100%; min-height: 44px; padding: 0 13px; border: 1px solid #d9d9d9; border-radius: 10px; background: #fff; color: #111; font: inherit; }
+.config-actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 24px; padding-top: 20px; border-top: 1px solid #ececec; }
+@media (max-width: 720px) { .config-grid { grid-template-columns: 1fr; } .config-actions { align-items: flex-start; flex-direction: column; } }
+
 * {
     box-sizing: border-box;
 }
@@ -1342,6 +1353,12 @@ body:has(.public-site) { background: #fff !important; }
 .rubric-details p { margin: 10px 0 0; }
 .rubric-met { color: var(--success); }
 .rubric-not-met { color: var(--warning); }
+.sample-score { display: grid; justify-items: end; gap: 4px; text-align: right; }
+.sample-score > span { color: var(--ink-soft); font-size: .78rem; }
+.rubric-list { display: grid; gap: 12px; margin-top: 12px; }
+.rubric-item { padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, .52); }
+.rubric-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.rubric-criterion { color: var(--ink); }
 
 .skeleton-title {
     width: 40%;
@@ -2173,7 +2190,7 @@ textarea {
 .portal-form {
     display: grid;
     gap: 22px;
-    max-width: 760px;
+    width: min(100%, 560px);
 }
 
 .portal-form label {

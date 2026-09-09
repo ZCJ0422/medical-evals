@@ -37,6 +37,15 @@ class EvaluationDefinitionResponse(BaseModel):
     name: str
     requires_judge: bool
     splits: list[EvaluationDefinitionSplitResponse]
+    default_split: str | None = None
+    default_sample_limit: int | None = None
+    judge_model_id: str | None = None
+
+
+class EvaluationDefinitionConfigUpdate(BaseModel):
+    default_split: str
+    default_sample_limit: int = Field(ge=1, le=10000)
+    judge_model_id: str | None = None
 
 
 class EvaluationRunCreate(BaseModel):
