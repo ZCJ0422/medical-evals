@@ -1,31 +1,27 @@
 import { test, expect } from "@playwright/test";
+import { signIn } from "./helpers";
 
 test("completed evaluation opens a result summary", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByLabel("Username").fill("admin");
-  await page.getByLabel("Password").fill("medical-evals-admin");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await signIn(page);
   await page.goto("/app/evaluations");
-  const completed = page.getByRole("row").filter({ hasText: "completed" }).first();
+  const completed = page.getByRole("row").filter({ hasText: "E2E completed result fixture" }).first();
   await expect(completed).toBeVisible();
   await completed.getByRole("link", { name: /View results/ }).click();
   await expect(page.getByText(/Evaluation results|测评结果/, { exact: true })).toBeVisible();
   await expect(page.getByText(/Parse success rate|解析成功率/)).toBeVisible();
   await expect(page.getByText(/Answer accuracy|答案准确率/)).toBeVisible();
-  page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toMatch(/report generated|报告已生成/i);
-    await dialog.accept();
-  });
   const generateReport = page.getByRole("button", { name: /Generate report|生成报告/ });
   await expect(generateReport).toHaveClass(/report-action/);
+  const downloadPromise = page.waitForEvent("download");
   await generateReport.click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("report.html");
+  expect(await download.failure()).toBeNull();
+  await expect(page.locator(".run-log")).toContainText("Run completed");
 });
 
 test("running evaluation opens live details", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByLabel("Username").fill("admin");
-  await page.getByLabel("Password").fill("medical-evals-admin");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await signIn(page);
   await page.goto("/app/evaluations");
 
   const running = page.getByRole("row").filter({ hasText: "E2E running result fixture" }).first();

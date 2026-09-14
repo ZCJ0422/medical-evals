@@ -1,18 +1,9 @@
 import { test, expect } from "@playwright/test";
 
-async function signIn(page: import("@playwright/test").Page) {
-  await page.goto("/login");
-  await page.getByLabel("Username").fill("admin");
-  await page.getByLabel("Password").fill("medical-evals-admin");
-  await page.getByRole("button", { name: "Sign in" }).click();
-}
+import { signIn, createEvaluation } from "./helpers";
 
 test("administrator can sign in", async ({ page }) => {
-  await page.goto("/login");
-  await page.getByLabel("Username").fill("admin");
-  await page.getByLabel("Password").fill("medical-evals-admin");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/app$/);
+  await signIn(page);
   await expect(page.getByRole("heading", { name: "Evaluation control room" })).toBeVisible();
 });
 
@@ -34,47 +25,22 @@ test("sidebar controls match navigation styling and remain readable on hover", a
 
 test("administrator can create an evaluation", async ({ page }) => {
   const payloads: Array<Record<string, unknown>> = [];
-  await page.route("**/api/evaluations", async (route) => {
-    if (route.request().method() === "POST") payloads.push(route.request().postDataJSON() as Record<string, unknown>);
+  await page.route("**/api/v1/evaluations", async (route) => {
+    if (route.request().method() === "POST") payloads.push(route.request().postDataJSON());
     await route.continue();
   });
-  await page.goto("/login");
-  await page.getByLabel("Username").fill("admin");
-  await page.getByLabel("Password").fill("medical-evals-admin");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByRole("link", { name: "New evaluation" }).click();
-  await page.getByRole("combobox", { name: /Dataset version/ }).selectOption("medical-medqa.dev.v1");
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await page.getByLabel(/Target model/).fill("target-model");
-  await page.getByLabel(/Target Base URL/).fill("https://target.example/v1");
-  await page.getByLabel(/Target API Key/).fill("test-key");
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await page.getByLabel(/Run name/).fill("Browser smoke evaluation");
-  await page.getByLabel(/Max samples/).fill("1");
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await page.getByRole("button", { name: "Create evaluation", exact: true }).click();
-  await expect(page.getByText(/^Evaluation queued:/)).toBeVisible();
+  await signIn(page);
+  await createEvaluation(page, "Browser smoke evaluation");
+  await expect(page.getByRole("row").filter({ hasText: "Browser smoke evaluation" })).toBeVisible();
   expect(payloads).toHaveLength(1);
-  expect(payloads[0].rubric_id).toBe("medical-medqa.default");
+  expect(payloads[0]).toMatchObject({ evaluation_definition_id: "medqa", split: "dev", sample_limit: 1 });
 });
 
 test("created evaluation appears with its queued status", async ({ page }) => {
   await signIn(page);
-  await page.getByRole("link", { name: "New evaluation" }).click();
-  await page.getByRole("combobox", { name: /Dataset version/ }).selectOption("medical-medqa.dev.v1");
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await page.getByLabel(/Target model/).fill("target-model");
-  await page.getByLabel(/Target Base URL/).fill("https://target.example/v1");
-  await page.getByLabel(/Target API Key/).fill("test-key");
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await page.getByLabel(/Run name/).fill("Visible queued evaluation");
-  await page.getByLabel(/Max samples/).fill("1");
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await page.getByRole("button", { name: "Create evaluation", exact: true }).click();
-  await page.waitForURL(/\/app\/evaluations$/);
-  const row = page.getByRole("row").filter({ hasText: "Visible queued evaluation" }).first();
+  await createEvaluation(page, "Visible queued evaluation");
+  const row = page.getByRole("row").filter({ hasText: "Visible queued evaluation" });
   await expect(row).toBeVisible();
-  await expect(row.locator(".status")).toHaveText("");
-  await expect(row.locator(".status")).toHaveAttribute("aria-label", /Queued|Running|Completed|Partial failed|Failed|Cancelled|排队中|运行中|完成|部分失败|失败|已取消/);
-  expect(await row.locator(".text-button").evaluateAll((buttons) => buttons.every((button) => button.textContent?.trim() === ""))).toBe(true);
+  await expect(row.locator(".status")).toHaveAttribute("aria-label", "Queued");
+  await expect(row.getByText("admin", { exact: true })).toBeVisible();
 });
