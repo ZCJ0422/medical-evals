@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Medical Evals system architecture",
+    "locale": "en",
+    "output": "architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/ZCJ0422/medical-evals",
+      "revision": "4163ef02d22d7a3de5452cb7dc99a432efc19ac7"
+    },
+    "views": [
+      { "id": "submission-path", "label": "Submission path", "focus": ["web", "api", "postgres", "redis"], "note": "Follow a public or admin submission into durable task state and the queue." },
+      { "id": "evaluation-path", "label": "Evaluation path", "focus": ["redis", "worker", "core", "target", "judge", "artifacts"], "note": "Follow queued work through model calls, scoring, and persisted artifacts." },
+      { "id": "operations", "label": "Operations and recovery", "focus": ["api", "postgres", "redis", "worker", "artifacts"], "note": "Inspect leases, progress, retries, and result storage." }
+    ]
+  },
+  "components": [
+    { "id": "web", "type": "frontend", "label": "Next.js Web UI", "sublabel": "portal", "pos": [40, 270], "size": [170, 72], "tag": "browser", "sources": [{ "path": "frontend/app/page.tsx", "label": "public entry" }, { "path": "frontend/components/app-shell.tsx", "label": "admin shell" }] },
+    { "id": "api", "type": "backend", "label": "FastAPI API", "sublabel": "routes + results", "pos": [235, 270], "size": [180, 72], "tag": ":8000", "sources": [{ "path": "backend/medical_evals_api/main.py", "label": "app wiring" }, { "path": "backend/medical_evals_api/routes/evaluations.py", "label": "evaluation routes" }] },
+    { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "runs + results", "pos": [480, 150], "size": [170, 72], "tag": "system of record", "sources": [{ "path": "backend/medical_evals_api/database.py", "label": "database" }, { "path": "backend/medical_evals_api/models/evaluations.py", "label": "evaluation models" }] },
+    { "id": "redis", "type": "messagebus", "label": "Redis Streams", "sublabel": "evaluation queue", "pos": [480, 390], "size": [170, 72], "tag": "consumer group", "sources": [{ "path": "backend/medical_evals_api/redis_queue.py", "label": "stream queue" }, { "path": "deploy/docker-compose.backend.yml", "label": "service" }] },
+    { "id": "worker", "type": "backend", "label": "Evaluation Worker", "sublabel": "leases + progress", "pos": [700, 390], "size": [180, 72], "tag": "async process", "sources": [{ "path": "backend/medical_evals_api/worker.py", "label": "worker loop" }] },
+    { "id": "core", "type": "backend", "label": "Evaluation Core", "sublabel": "MedQA + HealthBench", "pos": [930, 390], "size": [180, 72], "tag": "shared logic", "sources": [{ "path": "backend/medical_evals_api/evaluator_adapter.py", "label": "adapter" }, { "path": "medical_evals/core/healthbench.py", "label": "HealthBench" }] },
+    { "id": "target", "type": "external", "label": "Target Model API", "sublabel": "OpenAI-compatible", "pos": [1140, 230], "size": [180, 72], "tag": "user model", "sources": [{ "path": "backend/medical_evals_api/openai_compatible.py", "label": "client" }] },
+    { "id": "judge", "type": "external", "label": "Judge Model API", "sublabel": "rubric scoring", "pos": [1140, 540], "size": [180, 72], "tag": "optional", "sources": [{ "path": "backend/medical_evals_api/evaluator_adapter.py", "label": "judge client" }] },
+    { "id": "artifacts", "type": "cloud", "label": "Artifact Storage", "sublabel": "logs + summaries", "pos": [930, 170], "size": [180, 72], "tag": "shared volume", "sources": [{ "path": "backend/medical_evals_api/artifacts.py", "label": "artifact writer" }, { "path": "deploy/docker-compose.backend.yml", "label": "artifact volume" }] },
+    { "id": "datasets", "type": "external", "label": "Dataset Registry", "sublabel": "versioned samples", "pos": [700, 150], "size": [180, 72], "tag": "versioned inputs", "sources": [{ "path": "backend/medical_evals_api/evaluation_sources.py", "label": "dataset sources" }, { "path": "registry/evals/medical_medqa.yaml", "label": "registry definition" }] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Medical Evals deployment", "wraps": ["api", "postgres", "redis", "worker", "core", "artifacts", "datasets"], "pad": 28 },
+    { "kind": "security-group", "label": "Credential boundary", "wraps": ["api", "worker", "target", "judge"], "pad": 20 }
+  ],
+  "connections": [
+    { "id": "web-api", "from": "web", "to": "api", "label": "HTTP / JSON", "variant": "emphasis", "labelAt": [222, 356] },
+    { "id": "api-postgres", "from": "api", "to": "postgres", "label": "read/write state", "fromSide": "right", "toSide": "left" },
+    { "id": "api-redis", "from": "api", "to": "redis", "label": "enqueue run", "fromSide": "right", "toSide": "left" },
+    { "id": "redis-worker", "from": "redis", "to": "worker", "label": "claim stream message", "variant": "emphasis", "labelAt": [675, 476] },
+    { "id": "worker-postgres", "from": "worker", "to": "postgres", "label": "lease + progress", "fromSide": "top", "toSide": "bottom" },
+    { "id": "worker-datasets", "from": "worker", "to": "datasets", "label": "load samples", "fromSide": "top", "toSide": "bottom", "labelAt": [670, 260] },
+    { "id": "worker-core", "from": "worker", "to": "core", "label": "run adapter", "labelAt": [905, 476] },
+    { "id": "core-target", "from": "core", "to": "target", "label": "OpenAI-compatible calls", "variant": "emphasis", "labelAt": [1430, 350] },
+    { "id": "core-judge", "from": "core", "to": "judge", "label": "rubric judge calls", "variant": "dashed", "labelAt": [1430, 500] },
+    { "id": "worker-artifacts", "from": "worker", "to": "artifacts", "label": "write checkpoints + logs", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Request plane", "items": ["Next.js serves public submissions and the admin workspace", "FastAPI exposes versioned APIs and request IDs", "PostgreSQL is the source of truth for identities and runs"] },
+    { "dot": "emerald", "title": "Execution plane", "items": ["Redis Streams provides deduplicated queue delivery", "Workers renew leases and persist progress", "Evaluation Core runs MedQA and HealthBench adapters"] },
+    { "dot": "rose", "title": "Model and evidence plane", "items": ["Target and optional Judge models use OpenAI-compatible APIs", "Credentials are encrypted and are not written to artifacts", "Artifacts retain metadata, samples, logs, checkpoints, and summaries"] }
+  ]
+}
