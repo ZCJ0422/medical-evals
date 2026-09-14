@@ -23,14 +23,13 @@ from ..schemas.evaluations import (
 )
 from ..security import validate_public_base_url
 from ..secrets import encrypt_secret
-from .catalog import DATASETS
+from .catalog import list_dataset_versions
 
 router = APIRouter(prefix="/api/evaluations", tags=["evaluations"])
 v1_router = APIRouter(prefix="/api/v1/evaluations", tags=["evaluations"])
 
 _RETRY_SUFFIX = re.compile(r"\s-\sretry(\d*)$", re.IGNORECASE)
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_DATASET_RUBRICS = {item.dataset_id: item.rubric_id for item in DATASETS}
 _TERMINAL_STATUSES = {
     TaskStatus.COMPLETED,
     TaskStatus.PARTIAL_FAILED,
@@ -114,6 +113,7 @@ def _public_status(status_value: TaskStatus) -> EvaluationRunStatus:
 def _run_response(run) -> EvaluationRunResponse:
     return EvaluationRunResponse(
         run_id=run.run_id,
+        submitted_by=run.submitted_by,
         name=run.name,
         evaluation_definition_id=run.evaluation_definition_id,
         target_model_id=run.target_model_id,
@@ -175,17 +175,19 @@ def _enqueue_visible_run(repo: EvaluationRepository, run_id: str) -> None:
 
 
 @router.post("/preflight", response_model=PreflightResponse)
-def preflight(payload: EvaluationCreate, _: AdminIdentity = Depends(require_admin)) -> PreflightResponse:
+def preflight(
+    payload: EvaluationCreate,
+    _: AdminIdentity = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> PreflightResponse:
     errors = []
-    dataset = next((item for item in DATASETS if item.dataset_version_id == payload.dataset_version_id), None)
+    datasets = list_dataset_versions(session)
+    dataset = next((item for item in datasets if item.dataset_version_id == payload.dataset_version_id), None)
     if dataset is None:
         errors.append("Unsupported dataset version")
     else:
-        expected_rubric = _DATASET_RUBRICS.get(dataset.dataset_id)
-        if expected_rubric is None:
-            errors.append("Unsupported dataset family")
-        elif payload.rubric_id != expected_rubric:
-            errors.append(f"Rubric must be {expected_rubric} for this dataset")
+        if payload.rubric_id != dataset.rubric_id:
+            errors.append(f"Rubric must be {dataset.rubric_id} for this dataset")
     if payload.target_api_key_env and not _ENV_NAME.fullmatch(payload.target_api_key_env):
         errors.append("Target API Key environment name is invalid")
     if payload.judge_api_key_env and not _ENV_NAME.fullmatch(payload.judge_api_key_env):
@@ -196,7 +198,7 @@ def preflight(payload: EvaluationCreate, _: AdminIdentity = Depends(require_admi
         validate_public_base_url(payload.target_base_url.strip())
     except ValueError as exc:
         errors.append(str(exc))
-    needs_judge = not payload.dataset_version_id.startswith("medical-medqa")
+    needs_judge = dataset is not None and dataset.dataset_id == "medical-healthbench"
     if needs_judge and not payload.judge_model_id.strip():
         errors.append("This dataset requires a Judge Model configuration")
     if needs_judge and not payload.judge_api_key.strip() and not payload.judge_api_key_env.strip():
@@ -222,14 +224,18 @@ def list_evaluations(_: AdminIdentity = Depends(require_admin)) -> list[TaskSumm
 
 
 @router.post("", response_model=TaskSummary, status_code=http_status.HTTP_201_CREATED)
-def create_evaluation(payload: EvaluationCreate, _: AdminIdentity = Depends(require_admin)) -> TaskSummary:
-    check = preflight(payload, _)
+def create_evaluation(
+    payload: EvaluationCreate,
+    _: AdminIdentity = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> TaskSummary:
+    check = preflight(payload, _, session)
     if not check.ready:
         raise HTTPException(
             status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=check.errors,
         )
-    dataset = next((item for item in DATASETS if item.dataset_version_id == payload.dataset_version_id), None)
+    dataset = next((item for item in list_dataset_versions(session) if item.dataset_version_id == payload.dataset_version_id), None)
     dataset_name = dataset.name if dataset else payload.dataset_version_id.split(".")[0]
     generated_name = (
         f"{dataset_name}-{payload.target_model_id}-"

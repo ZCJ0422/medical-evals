@@ -51,16 +51,19 @@ def test_catalog_lists_only_builtin_definitions_without_raw_content(client):
             "version": "v1",
             "sample_count": 3425,
             "default_sample_limit": 3425,
+            "source_path": "registry/data/medical_medqa/dev.jsonl",
+            "source_sha256": payload[0]["splits"][0]["source_sha256"],
         }
     ]
+    assert len(payload[0]["splits"][0]["source_sha256"]) == 64
     assert payload[1]["name"] == "HealthBench"
     assert payload[1]["requires_judge"] is True
-    assert [item["id"] for item in payload[1]["splits"]] == [
+    assert sorted(item["id"] for item in payload[1]["splits"]) == sorted([
         "smoke",
         "oss",
         "hard",
         "consensus",
-    ]
+    ])
     assert all("prompt" not in item and "rubrics" not in item for item in payload)
 
 
@@ -76,3 +79,20 @@ def test_v1_routes_remain_visible_in_openapi(client):
     assert "/api/v1/evaluations/{run_id}/summary" in paths
     assert "/api/v1/evaluations/{run_id}/samples" in paths
     assert "/api/v1/evaluations/{run_id}/artifacts" in paths
+
+
+def test_healthbench_preserves_smoke_as_default_split(client):
+    token = _issue_token(client)
+    response = client.get("/api/v1/datasets", headers=_auth(token))
+    definition = next(item for item in response.json() if item["id"] == "healthbench")
+    assert definition["default_split"] == "smoke"
+    assert definition["default_sample_limit"] == 2
+
+
+def test_dataset_config_rejects_invalid_split_and_limit(client):
+    response = client.post("/api/v1/auth/login", json={"username": "admin", "password": "medical-evals-admin"})
+    headers = _auth(response.json()["access_token"])
+    invalid = client.patch("/api/v1/datasets/medqa/config", headers=headers, json={"default_split": "missing", "default_sample_limit": 1})
+    assert invalid.status_code == 404
+    oversized = client.patch("/api/v1/datasets/medqa/config", headers=headers, json={"default_split": "dev", "default_sample_limit": 9999})
+    assert oversized.status_code == 422

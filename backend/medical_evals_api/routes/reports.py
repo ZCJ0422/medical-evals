@@ -30,6 +30,8 @@ _ARTIFACT_KINDS = {
     "summary.json": "summary",
     "metadata.json": "metadata",
     "samples.jsonl": "samples",
+    "events.jsonl": "events",
+    "manifest.json": "manifest",
 }
 
 

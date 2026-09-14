@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from dataclasses import dataclass
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -167,7 +169,7 @@ class ModelProfileService:
                 if credentials.model_name.lower().startswith("deepseek-v4")
                 else None
             )
-            completion_kwargs = {
+            completion_kwargs: dict[str, Any] = {
                 "model": credentials.model_name,
                 "temperature": 0,
                 "max_tokens": 32,

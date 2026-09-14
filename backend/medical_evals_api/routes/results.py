@@ -98,6 +98,7 @@ def _summary_response(repo: EvaluationRepository, run_id: str) -> EvaluationSumm
         completed_count=stored.get("completed_count", run.progress.completed_count),
         failed_count=stored.get("failed_count", run.progress.failed_count),
         retry_count=stored.get("retry_count", run.progress.retry_count),
+        result_version=stored.get("result_version", "workbench.result.v1"),
     )
 
 

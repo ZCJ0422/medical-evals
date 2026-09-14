@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from .config import settings, validate_runtime_security
 from .database import get_engine
-from .routes import auth, catalog, evaluations, models, reports, results
+from .routes import auth, catalog, evaluations, models, monitoring, reports, results
 from .schemas.common import ApiError, ApiErrorEnvelope
 
 
@@ -163,6 +163,7 @@ app.include_router(results.router)
 app.include_router(results.v1_router)
 app.include_router(reports.router)
 app.include_router(reports.v1_router)
+app.include_router(monitoring.router)
 
 
 @app.get("/healthz")

@@ -1,9 +1,16 @@
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from medical_evals_api.database import metadata
 from medical_evals_api.evaluator_adapter import healthbench_samples_path
-from medical_evals_api.routes.catalog import DATASETS
+from medical_evals_api.routes.catalog import list_dataset_versions
 
 
-def test_catalog_sample_counts_match_registered_dataset_versions():
-    counts = {item.dataset_version_id: item.sample_count for item in DATASETS}
+def test_catalog_sample_counts_match_registered_dataset_versions(tmp_path):
+    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'catalog.sqlite3'}")
+    metadata.create_all(engine)
+    with Session(engine) as session:
+        counts = {item.dataset_version_id: item.sample_count for item in list_dataset_versions(session)}
 
     assert counts == {
         "medical-medqa.dev.v1": 3425,

@@ -1,9 +1,10 @@
+from typing import Any
 from collections.abc import Iterator
 from functools import lru_cache
 import os
 from pathlib import Path
 
-from alembic import command
+import alembic.command as command
 from alembic.config import Config
 from fastapi import Depends
 import redis
@@ -78,6 +79,26 @@ evaluation_definitions = Table(
     Column("is_enabled", Boolean, nullable=False, server_default="true"),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+evaluation_definition_splits = Table(
+    "evaluation_definition_splits",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("evaluation_definition_id", String(64), ForeignKey("evaluation_definitions.id", ondelete="CASCADE"), primary_key=True),
+    Column("dataset_version_id", String(255), nullable=False, unique=True),
+    Column("version", String(64), nullable=False),
+    Column("sample_count", Integer, nullable=False),
+    Column("default_sample_limit", Integer, nullable=False),
+    Column("rubric_id", String(255), nullable=False),
+    Column("source_path", Text, nullable=False),
+    Column("source_sha256", String(64)),
+    Column("is_enabled", Boolean, nullable=False, server_default="true"),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    UniqueConstraint("evaluation_definition_id", "id", name="uq_evaluation_definition_splits_definition_id_id"),
+    Index("ix_evaluation_definition_splits_definition_id", "evaluation_definition_id"),
+    Index("ix_evaluation_definition_splits_is_enabled", "is_enabled"),
 )
 
 evaluation_runs = Table(
@@ -160,7 +181,7 @@ evaluation_sample_results = Table(
 
 @lru_cache(maxsize=8)
 def _build_engine(database_url: str) -> Engine:
-    options = {"pool_pre_ping": True}
+    options: dict[str, Any] = {"pool_pre_ping": True}
     if database_url.startswith("sqlite"):
         options["connect_args"] = {"check_same_thread": False}
         if ":memory:" in database_url:

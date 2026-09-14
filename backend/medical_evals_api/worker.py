@@ -5,6 +5,8 @@ from .artifacts import ArtifactWriter
 from .evaluator_adapter import EvaluationAdapter, OpenAICompatibleEvaluationAdapter
 from .evaluator_adapter import healthbench_samples_path
 from .models import EvaluationTask
+from .models.evaluations import EvaluationRun
+from .repositories.evaluations import EvaluationRepository
 from .paths import registry_data_path
 from .queue import QueueClaim, TaskQueue
 from .repositories.tasks import TaskRepository
@@ -22,7 +24,7 @@ def _safe_error(error: Exception) -> str:
 class Worker:
     def __init__(
         self,
-        repository: TaskRepository,
+        repository: TaskRepository | EvaluationRepository,
         adapter: EvaluationAdapter | None = None,
         worker_id: str = "",
         lease_seconds: int = 300,
@@ -48,9 +50,9 @@ class Worker:
 
     def _acknowledge_terminal_claim(
         self,
-        task: EvaluationTask,
+        task: EvaluationTask | EvaluationRun,
         queue_claim: QueueClaim | None,
-    ) -> EvaluationTask:
+    ) -> EvaluationTask | EvaluationRun:
         if queue_claim is not None and task.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
             try:
                 if self.queue is not None:
@@ -59,7 +61,7 @@ class Worker:
                 pass
         return task
 
-    def _claim_queued_task(self, task_id: str) -> EvaluationTask | None:
+    def _claim_queued_task(self, task_id: str) -> EvaluationTask | EvaluationRun | None:
         if not self.worker_id:
             return None
         claim_task = getattr(self.repository, "claim", None)
@@ -71,7 +73,7 @@ class Worker:
         self,
         task_id: str,
         queue_claim: QueueClaim | None = None,
-    ) -> EvaluationTask:
+    ) -> EvaluationTask | EvaluationRun:
         task = self.repository.get(task_id)
         if task is None:
             raise KeyError(task_id)
@@ -181,6 +183,7 @@ class Worker:
                 close = getattr(client, "close", None)
                 if close:
                     close()
+            artifacts.finalize()
         current = self.repository.get(task_id)
         if current is not None and current.status == TaskStatus.CANCELLED:
             return self._acknowledge_terminal_claim(current, queue_claim)
@@ -191,6 +194,7 @@ class Worker:
         artifacts.write_summary({"task_id": task_id, "total_score": result.total_score, "accuracy": result.accuracy, "parse_success_rate": result.parse_success_rate, "completed_count": result.total_count, "failed_count": result.failed_count, "retry_count": result.retry_count, "request_success_count": result.request_success_count or result.success_count, "parse_failed_count": result.parse_failed_count})
         artifacts.log(f"[summary] completed={result.success_count} failed={result.failed_count} retries={result.retry_count} total_score={result.total_score:.4f}")
         artifacts.log("Run completed")
+        artifacts.finalize()
         completed = self.repository.set_status_if_not_cancelled(
             task_id,
             TaskStatus.PARTIAL_FAILED if result.failed_count else TaskStatus.COMPLETED,
@@ -205,7 +209,7 @@ class Worker:
 
     def _recover_and_reconcile(
         self,
-        repository_factory: Callable[[], TaskRepository],
+        repository_factory: Callable[[], TaskRepository | EvaluationRepository],
         queue: TaskQueue,
         *,
         recover_interrupted: bool,
@@ -215,7 +219,7 @@ class Worker:
             expired_run_ids = repository.recover_expired_leases(
                 "Worker lease expired before the evaluation reached a terminal state; create a retry to run it again"
             )
-            queued_run_ids: list[str] = list(expired_run_ids)
+            queued_run_ids: list[str] = list(expired_run_ids) if not isinstance(expired_run_ids, int) else []
             if recover_interrupted:
                 repository.recover_interrupted_tasks(
                     "Worker stopped before the evaluation reached a terminal state; create a retry to run it again"
@@ -231,7 +235,7 @@ class Worker:
     def run_forever(
         self,
         queue: TaskQueue,
-        repository_factory: Callable[[], TaskRepository],
+        repository_factory: Callable[[], TaskRepository | EvaluationRepository],
         *,
         idle_seconds: float = 1.0,
     ) -> None:

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..auth import AdminIdentity, CurrentUser, require_admin
@@ -10,18 +10,29 @@ from ..schemas.evaluations import EvaluationDefinitionConfigUpdate, EvaluationDe
 router = APIRouter(prefix="/api", tags=["catalog"])
 v1_router = APIRouter(prefix="/api/v1", tags=["catalog"])
 
-DATASETS = [
-    DatasetVersionSummary(dataset_version_id="medical-medqa.dev.v1", dataset_id="medical-medqa", rubric_id="medical-medqa.default", name="MedQA", version="dev.v1", sample_count=3425),
-    DatasetVersionSummary(dataset_version_id="medical-healthbench.smoke.v1", dataset_id="medical-healthbench", rubric_id="healthbench-default", name="HealthBench", version="smoke.v1", sample_count=2),
-    DatasetVersionSummary(dataset_version_id="medical-healthbench.oss.v1", dataset_id="medical-healthbench", rubric_id="healthbench-default", name="HealthBench", version="oss.v1", sample_count=5000),
-    DatasetVersionSummary(dataset_version_id="medical-healthbench.hard.v1", dataset_id="medical-healthbench", rubric_id="healthbench-default", name="HealthBench", version="hard.v1", sample_count=1000),
-    DatasetVersionSummary(dataset_version_id="medical-healthbench.consensus.v1", dataset_id="medical-healthbench", rubric_id="healthbench-default", name="HealthBench", version="consensus.v1", sample_count=3671),
-]
+def list_dataset_versions(session: Session) -> list[DatasetVersionSummary]:
+    values: list[DatasetVersionSummary] = []
+    for definition in EvaluationRepository(session).list_definitions():
+        for split in definition.splits:
+            values.append(
+                DatasetVersionSummary(
+                    dataset_version_id=split.dataset_version_id,
+                    dataset_id=definition.kind,
+                    rubric_id=split.rubric_id,
+                    name=definition.name,
+                    version=f"{split.id}.{split.version}",
+                    sample_count=split.sample_count,
+                )
+            )
+    return values
 
 
 @router.get("/datasets", response_model=list[DatasetVersionSummary])
-def list_datasets(_: AdminIdentity = Depends(require_admin)) -> list[DatasetVersionSummary]:
-    return DATASETS
+def list_datasets(
+    _: AdminIdentity = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> list[DatasetVersionSummary]:
+    return list_dataset_versions(session)
 
 
 @v1_router.get("/datasets", response_model=list[EvaluationDefinitionResponse])
@@ -42,6 +53,8 @@ def list_datasets_v1(
                     version=split.version,
                     sample_count=split.sample_count,
                     default_sample_limit=split.default_sample_limit,
+                    source_path=split.source_path,
+                    source_sha256=split.source_sha256,
                 )
                 for split in definition.splits
             ],
@@ -83,6 +96,8 @@ def update_dataset_config(
                 version=split.version,
                 sample_count=split.sample_count,
                 default_sample_limit=split.default_sample_limit,
+                source_path=split.source_path,
+                source_sha256=split.source_sha256,
             )
             for split in definition.splits
         ],

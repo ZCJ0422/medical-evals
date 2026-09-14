@@ -46,7 +46,7 @@ def validate_public_base_url(url: str) -> AnyHttpUrl:
             addresses = {item[4][0] for item in socket.getaddrinfo(host, parts.port, type=socket.SOCK_STREAM)}
         except socket.gaierror:
             addresses = set()
-        if any(_blocked_ip(address) for address in addresses):
+        if any(_blocked_ip(str(address)) for address in addresses):
             raise ValueError("Base URL must resolve to a public host") from exc
     return parsed
 

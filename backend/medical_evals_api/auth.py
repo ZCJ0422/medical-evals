@@ -121,7 +121,8 @@ def require_user(request: Request, session: Session = Depends(get_session)) -> U
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     claims = _decode_access_token(token)
     repository = UserRepository(session)
-    user = repository.get_by_id(claims["user_id"]) if claims["user_id"] else repository.get_by_username(claims["username"])
+    user_id, username = claims["user_id"], claims["username"]
+    user = repository.get_by_id(user_id) if user_id else repository.get_by_username(username) if username else None
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     if user.status != "active":

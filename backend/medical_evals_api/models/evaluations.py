@@ -15,6 +15,8 @@ class EvaluationDefinitionSplit:
     sample_count: int
     default_sample_limit: int
     rubric_id: str
+    source_path: str = ""
+    source_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ class EvaluationCreateCommand:
 class EvaluationRun:
     run_id: str
     user_id: str
+    submitted_by: str
     name: str
     evaluation_definition_id: str
     target_model_profile_id: str

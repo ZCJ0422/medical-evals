@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import builtins
 import json
+
+from medical_evals.reports import sha256_file
 from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 from pathlib import Path
@@ -14,6 +17,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import (
     evaluation_definitions,
+    evaluation_definition_splits,
     evaluation_results,
     evaluation_runs,
     evaluation_sample_results,
@@ -23,12 +27,12 @@ from ..database import (
     users,
 )
 from ..evaluation_sources import (
-    get_builtin_evaluation_definition,
-    get_definition_split,
+    dataset_source_path,
     list_builtin_evaluation_definitions,
 )
-from ..models.evaluations import EvaluationCreateCommand, EvaluationDefinition, EvaluationRun
+from ..models.evaluations import EvaluationCreateCommand, EvaluationDefinition, EvaluationDefinitionSplit, EvaluationRun
 from ..schemas.common import TaskProgress, TaskStatus
+from ..versioning import RESULT_SCHEMA_VERSION
 
 
 def _utcnow() -> datetime:
@@ -58,7 +62,7 @@ def _read_sample_artifact_page(
     *,
     offset: int,
     limit: int,
-) -> tuple[list[dict], int]:
+) -> tuple[builtins.list[dict], int]:
     if not path.exists():
         return [], 0
     records: list[dict] = []
@@ -94,6 +98,7 @@ class EvaluationRepository:
                 users,
                 model_profiles,
                 evaluation_definitions,
+                evaluation_definition_splits,
                 evaluation_runs,
                 run_model_snapshots,
                 evaluation_results,
@@ -109,36 +114,136 @@ class EvaluationRepository:
         }
         inserted = False
         for definition in list_builtin_evaluation_definitions():
-            if definition.id in existing:
-                continue
-            first_split = definition.splits[0]
-            self.session.execute(
-                insert(evaluation_definitions).values(
-                    id=definition.id,
-                    name=definition.name,
-                    kind=definition.kind,
-                    dataset_version=first_split.dataset_version_id,
-                    requires_judge=definition.requires_judge,
-                    default_config_json=definition.default_config,
-                    is_enabled=True,
-                    created_at=_utcnow(),
-                    updated_at=_utcnow(),
+            if definition.id not in existing:
+                first_split = definition.splits[0]
+                self.session.execute(
+                    insert(evaluation_definitions).values(
+                        id=definition.id,
+                        name=definition.name,
+                        kind=definition.kind,
+                        dataset_version=first_split.dataset_version_id,
+                        requires_judge=definition.requires_judge,
+                        default_config_json=definition.default_config,
+                        is_enabled=True,
+                        created_at=_utcnow(),
+                        updated_at=_utcnow(),
+                    )
                 )
-            )
-            inserted = True
+                inserted = True
+            existing_split_ids = {
+                row["id"]
+                for row in self.session.execute(
+                    select(evaluation_definition_splits.c.id).where(
+                        evaluation_definition_splits.c.evaluation_definition_id == definition.id
+                    )
+                ).mappings()
+            }
+            for split in definition.splits:
+                source_path, source_file = dataset_source_path(split.dataset_version_id)
+                source_sha256 = None
+                if source_file.exists():
+                    source_sha256 = sha256_file(source_file)
+                if split.id in existing_split_ids:
+                    existing_split = self.session.execute(
+                        select(evaluation_definition_splits).where(
+                            evaluation_definition_splits.c.evaluation_definition_id == definition.id,
+                            evaluation_definition_splits.c.id == split.id,
+                        )
+                    ).mappings().first()
+                    if existing_split is not None and (
+                        existing_split["source_path"] != source_path
+                        or existing_split["source_sha256"] != source_sha256
+                    ):
+                        self.session.execute(
+                            update(evaluation_definition_splits)
+                            .where(
+                                evaluation_definition_splits.c.evaluation_definition_id == definition.id,
+                                evaluation_definition_splits.c.id == split.id,
+                            )
+                            .values(
+                                source_path=source_path,
+                                source_sha256=source_sha256,
+                                updated_at=_utcnow(),
+                            )
+                        )
+                        inserted = True
+                    continue
+                self.session.execute(
+                    insert(evaluation_definition_splits).values(
+                        id=split.id,
+                        evaluation_definition_id=definition.id,
+                        dataset_version_id=split.dataset_version_id,
+                        version=split.version,
+                        sample_count=split.sample_count,
+                        default_sample_limit=split.default_sample_limit,
+                        rubric_id=split.rubric_id,
+                        source_path=source_path,
+                        source_sha256=source_sha256,
+                        is_enabled=True,
+                        created_at=_utcnow(),
+                        updated_at=_utcnow(),
+                    )
+                )
+                inserted = True
         if inserted:
             self.session.commit()
 
-    def list_definitions(self) -> list[EvaluationDefinition]:
+    def _definition_from_rows(self, definition_row, split_rows) -> EvaluationDefinition:
+        splits = tuple(
+            EvaluationDefinitionSplit(
+                id=row["id"],
+                dataset_version_id=row["dataset_version_id"],
+                version=row["version"],
+                sample_count=row["sample_count"],
+                default_sample_limit=row["default_sample_limit"],
+                rubric_id=row["rubric_id"],
+                source_path=row["source_path"],
+                source_sha256=row["source_sha256"],
+            )
+            for row in split_rows
+        )
+        # Preserve the published default split order (HealthBench smoke first)
+        # when moving the catalog from Python constants to database rows.
+        builtin = next((item for item in list_builtin_evaluation_definitions() if item.id == definition_row["id"]), None)
+        if builtin is not None:
+            order = {split.id: index for index, split in enumerate(builtin.splits)}
+            splits = tuple(sorted(splits, key=lambda split: (order.get(split.id, len(order)), split.id)))
+        return EvaluationDefinition(
+            id=definition_row["id"],
+            name=definition_row["name"],
+            kind=definition_row["kind"],
+            requires_judge=definition_row["requires_judge"],
+            default_config=dict(definition_row["default_config_json"] or {}),
+            splits=splits,
+        )
+
+    def _split(self, definition_id: str, split_id: str | None, *, include_disabled: bool = False):
+        query = select(evaluation_definition_splits).where(
+            evaluation_definition_splits.c.evaluation_definition_id == definition_id,
+        )
+        if not include_disabled:
+            query = query.where(evaluation_definition_splits.c.is_enabled.is_(True))
+        if split_id:
+            query = query.where(evaluation_definition_splits.c.id == split_id)
+        else:
+            query = query.order_by(evaluation_definition_splits.c.id)
+        return self.session.execute(query).mappings().first()
+
+    def list_definitions(self) -> builtins.list[EvaluationDefinition]:
         rows = self.session.execute(
             select(evaluation_definitions).where(evaluation_definitions.c.is_enabled.is_(True))
         ).mappings()
-        configured = {row["id"]: row for row in rows}
         definitions = []
-        for definition in list_builtin_evaluation_definitions():
-            row = configured.get(definition.id)
-            if row is not None:
-                definitions.append(replace(definition, default_config=dict(row["default_config_json"] or {})))
+        for row in rows:
+            split_rows = self.session.execute(
+                select(evaluation_definition_splits).where(
+                    evaluation_definition_splits.c.evaluation_definition_id == row["id"],
+                    evaluation_definition_splits.c.is_enabled.is_(True),
+                ).order_by(evaluation_definition_splits.c.id)
+            ).mappings()
+            definition = self._definition_from_rows(row, split_rows)
+            if definition.splits:
+                definitions.append(definition)
         return definitions
 
     def get_definition(self, definition_id: str) -> EvaluationDefinition | None:
@@ -150,8 +255,13 @@ class EvaluationRepository:
         ).mappings().first()
         if row is None:
             return None
-        definition = get_builtin_evaluation_definition(definition_id)
-        return replace(definition, default_config=dict(row["default_config_json"] or {})) if definition else None
+        split_rows = self.session.execute(
+            select(evaluation_definition_splits).where(
+                evaluation_definition_splits.c.evaluation_definition_id == definition_id,
+                evaluation_definition_splits.c.is_enabled.is_(True),
+            ).order_by(evaluation_definition_splits.c.id)
+        ).mappings()
+        return self._definition_from_rows(row, split_rows)
 
     def update_definition_config(
         self,
@@ -161,12 +271,13 @@ class EvaluationRepository:
         default_sample_limit: int,
         judge_model_id: str | None,
     ) -> EvaluationDefinition | None:
-        definition = get_builtin_evaluation_definition(definition_id)
-        if definition is None or get_definition_split(definition_id, default_split) is None:
+        definition = self.get_definition(definition_id)
+        split = self._split(definition_id, default_split)
+        if definition is None or split is None:
             return None
         if definition.requires_judge and not judge_model_id:
             raise ValueError("Judge model profile is required for this dataset")
-        if default_sample_limit > get_definition_split(definition_id, default_split).sample_count:
+        if default_sample_limit > split["sample_count"]:
             raise ValueError("Sample limit cannot exceed the selected dataset sample count")
         config = {
             "default_split": default_split,
@@ -177,7 +288,7 @@ class EvaluationRepository:
             update(evaluation_definitions)
             .where(evaluation_definitions.c.id == definition_id)
             .values(
-                dataset_version=get_definition_split(definition_id, default_split).dataset_version_id,
+                dataset_version=split["dataset_version_id"],
                 default_config_json=config,
                 updated_at=_utcnow(),
             )
@@ -208,7 +319,7 @@ class EvaluationRepository:
         return str(row[0]) if row is not None else ""
 
     def _build_run(self, row) -> EvaluationRun:
-        split = get_definition_split(row["evaluation_definition_id"], row["split"])
+        split = self._split(row["evaluation_definition_id"], row["split"], include_disabled=True)
         if split is None:
             raise KeyError(f"Unknown split {row['split']!r} for {row['evaluation_definition_id']}")
         snapshots = self._snapshot_rows(row["id"])
@@ -216,17 +327,23 @@ class EvaluationRepository:
         judge_snapshot = snapshots.get("judge")
         if target_snapshot is None:
             raise KeyError(f"Target snapshot missing for run {row['id']}")
+        submitted_by = row.get("submitted_by_username") if hasattr(row, "get") else None
+        if not submitted_by:
+            submitted_by = self.session.execute(
+                select(users.c.username).where(users.c.id == row["user_id"])
+            ).scalar_one_or_none()
         return EvaluationRun(
             run_id=row["id"],
             user_id=row["user_id"],
+            submitted_by=str(submitted_by or row["user_id"]),
             name=row["name"],
             evaluation_definition_id=row["evaluation_definition_id"],
             target_model_profile_id=row["target_model_profile_id"],
             judge_model_profile_id=row["judge_model_profile_id"],
             target_model_id=target_snapshot["model_name"],
             judge_model_id=judge_snapshot["model_name"] if judge_snapshot else "",
-            dataset_version_id=split.dataset_version_id,
-            rubric_id=split.rubric_id,
+            dataset_version_id=split["dataset_version_id"],
+            rubric_id=split["rubric_id"],
             status=TaskStatus(row["status"]),
             progress=_coerce_progress(row["progress_json"]),
             split=row["split"],
@@ -252,7 +369,7 @@ class EvaluationRepository:
         if definition is None:
             raise KeyError("evaluation_definition")
         configured_split = definition.default_config.get("default_split")
-        split = get_definition_split(definition.id, command.split or configured_split)
+        split = self._split(definition.id, command.split or configured_split or (definition.splits[0].id if definition.splits else None))
         if split is None:
             raise KeyError("split")
         target_profile = self._profile_for_user(command.target_model_profile_id, user_id)
@@ -289,8 +406,8 @@ class EvaluationRepository:
                 judge_model_profile_id=judge_profile["id"] if judge_profile else None,
                 retry_of_run_id=command.retry_of_run_id,
                 status=TaskStatus.QUEUED.value,
-                split=split.id,
-                max_samples=command.sample_limit or definition.default_config.get("default_sample_limit") or split.default_sample_limit,
+                split=split["id"],
+                max_samples=command.sample_limit or definition.default_config.get("default_sample_limit") or split["default_sample_limit"],
                 config_json=merged_config,
                 progress_json=progress,
                 error=None,
@@ -370,8 +487,11 @@ class EvaluationRepository:
             stmt = stmt.offset(offset)
         return stmt
 
-    def list(self, filters: dict[str, Any] | None = None) -> list[EvaluationRun]:
-        stmt = select(evaluation_runs).order_by(
+    def list(self, filters: dict[str, Any] | None = None) -> builtins.list[EvaluationRun]:
+        stmt = select(
+            evaluation_runs,
+            users.c.username.label("submitted_by_username"),
+        ).join(users, users.c.id == evaluation_runs.c.user_id).order_by(
             evaluation_runs.c.created_at.desc(),
             evaluation_runs.c.id.desc(),
         )
@@ -379,8 +499,11 @@ class EvaluationRepository:
         rows = self.session.execute(stmt).mappings()
         return [self._build_run(row) for row in rows]
 
-    def list_owned(self, user_id: str, filters: dict[str, Any] | None = None) -> list[EvaluationRun]:
-        stmt = select(evaluation_runs).where(
+    def list_owned(self, user_id: str, filters: dict[str, Any] | None = None) -> builtins.list[EvaluationRun]:
+        stmt = select(
+            evaluation_runs,
+            users.c.username.label("submitted_by_username"),
+        ).join(users, users.c.id == evaluation_runs.c.user_id).where(
             evaluation_runs.c.user_id == user_id
         ).order_by(
             evaluation_runs.c.created_at.desc(),
@@ -390,7 +513,7 @@ class EvaluationRepository:
         rows = self.session.execute(stmt).mappings()
         return [self._build_run(row) for row in rows]
 
-    def list_queued_run_ids(self, limit: int | None = None) -> list[str]:
+    def list_queued_run_ids(self, limit: int | None = None) -> builtins.list[str]:
         stmt = (
             select(evaluation_runs.c.id)
             .where(evaluation_runs.c.status == TaskStatus.QUEUED.value)
@@ -480,7 +603,7 @@ class EvaluationRepository:
         self.session.commit()
         return bool(updated.rowcount)
 
-    def recover_expired_leases(self, error: str) -> list[str]:
+    def recover_expired_leases(self, error: str) -> builtins.list[str]:
         del error
         now = _utcnow()
         recovered_rows = self.session.execute(
@@ -682,8 +805,9 @@ class EvaluationRepository:
         ).first()
         payload = {
             "run_id": task_id,
-            "result_version": "workbench.v1",
+            "result_version": RESULT_SCHEMA_VERSION,
             "summary_json": {
+                "schema_version": RESULT_SCHEMA_VERSION,
                 "total_score": total_score,
                 "dimension_scores": dimension_scores,
                 "error_categories": error_categories,
@@ -729,6 +853,7 @@ class EvaluationRepository:
         summary = dict(row["summary_json"] or {})
         return {
             "task_id": task_id,
+            "result_version": row["result_version"] or "workbench.result.v1",
             "total_score": summary.get("total_score", 0.0),
             "accuracy": summary.get("accuracy", summary.get("total_score", 0.0)),
             "parse_success_rate": summary.get("parse_success_rate"),
@@ -797,7 +922,7 @@ class EvaluationRepository:
             )
             self.session.commit()
 
-    def get_samples(self, task_id: str, offset: int = 0, limit: int = 50) -> tuple[list[dict], int]:
+    def get_samples(self, task_id: str, offset: int = 0, limit: int = 50) -> tuple[builtins.list[dict], int]:
         run = self.get(task_id)
         if run is None:
             raise KeyError(task_id)

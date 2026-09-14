@@ -162,7 +162,8 @@ def test_create_run_snapshots_non_secret_model_metadata_and_lists_only_owned_run
 
     assert len(snapshot_rows) == 1
     assert snapshot_rows[0]["profile_role"] == "target"
-    assert snapshot_rows[0]["display_name"] == "Primary"
+    # Public profiles use the provider model name as their display name.
+    assert snapshot_rows[0]["display_name"] == "primary-model"
     assert snapshot_rows[0]["base_url"] == "https://example.test/v1"
     assert snapshot_rows[0]["model_name"] == "primary-model"
     assert snapshot_rows[0]["api_key_encrypted"] == ""

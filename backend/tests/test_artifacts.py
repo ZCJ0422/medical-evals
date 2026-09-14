@@ -58,6 +58,23 @@ def test_artifact_writer_prefixes_logs_with_local_timezone_timestamp(tmp_path):
     assert re.match(r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\] target request completed$", line)
 
 
+def test_artifact_writer_emits_versioned_events_and_manifest(tmp_path):
+    writer = ArtifactWriter(tmp_path, "task-1")
+    writer.log("task started")
+    writer.write_summary({"accuracy": 0.5})
+    writer.finalize()
+
+    summary = json.loads((tmp_path / "task-1" / "summary.json").read_text(encoding="utf-8"))
+    events = [json.loads(line) for line in (tmp_path / "task-1" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    manifest = json.loads((tmp_path / "task-1" / "manifest.json").read_text(encoding="utf-8"))
+
+    assert summary["schema_version"] == "workbench.summary.v2"
+    assert events[0]["schema_version"] == "workbench.event.v1"
+    assert events[0]["event_type"] == "log"
+    assert manifest["schema_version"] == "workbench.artifacts.v1"
+    assert {item["name"] for item in manifest["files"]} >= {"run.log", "events.jsonl", "summary.json"}
+
+
 def test_medqa_checkpoint_records_use_shared_aggregation():
     from medical_evals.core.medqa import aggregate_medqa
     from medical_evals_api.evaluator_adapter import deserialize_medqa_record

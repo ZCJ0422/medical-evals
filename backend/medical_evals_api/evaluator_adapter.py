@@ -5,6 +5,7 @@ import time
 from typing import cast
 
 from .models import EvaluationTask
+from .models.evaluations import EvaluationRun
 from .schemas.common import TaskProgress
 from .openai_compatible import OpenAICompatibleClient
 from .paths import registry_data_path
@@ -88,12 +89,12 @@ class EvaluationRunResult:
 
 
 class EvaluationAdapter:
-    def run(self, task: EvaluationTask, on_progress: Callable[[TaskProgress], None], is_cancelled: Callable[[], bool]) -> EvaluationRunResult:
+    def run(self, task: EvaluationTask | EvaluationRun, on_progress: Callable[[TaskProgress], None], is_cancelled: Callable[[], bool]) -> EvaluationRunResult:
         raise NotImplementedError
 
 
 class DryRunEvaluationAdapter(EvaluationAdapter):
-    def run(self, task: EvaluationTask, on_progress: Callable[[TaskProgress], None], is_cancelled: Callable[[], bool]) -> EvaluationRunResult:
+    def run(self, task: EvaluationTask | EvaluationRun, on_progress: Callable[[TaskProgress], None], is_cancelled: Callable[[], bool]) -> EvaluationRunResult:
         total = task.max_samples or task.progress.total_count or 1
         for completed in range(1, total + 1):
             if is_cancelled():
@@ -144,7 +145,7 @@ class OpenAICompatibleEvaluationAdapter(EvaluationAdapter):
                 f"attempt={event.attempt + 1} reason={event.category or 'request_error'}"
             )
 
-    def run(self, task: EvaluationTask, on_progress: Callable[[TaskProgress], None], is_cancelled: Callable[[], bool]) -> EvaluationRunResult:
+    def run(self, task: EvaluationTask | EvaluationRun, on_progress: Callable[[TaskProgress], None], is_cancelled: Callable[[], bool]) -> EvaluationRunResult:
         if task.dataset_version_id.startswith("medical-healthbench"):
             return self._run_healthbench(task, on_progress, is_cancelled)
         if not task.dataset_version_id.startswith("medical-medqa"):

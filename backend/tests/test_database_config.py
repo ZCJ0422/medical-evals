@@ -52,6 +52,7 @@ def test_metadata_declares_initial_workbench_tables() -> None:
         "refresh_tokens",
         "model_profiles",
         "evaluation_definitions",
+        "evaluation_definition_splits",
         "evaluation_runs",
         "run_model_snapshots",
         "evaluation_results",
@@ -110,3 +111,39 @@ def test_alembic_upgrades_existing_evaluation_runs_with_non_null_names(tmp_path)
     assert columns["name"]["nullable"] is False
     assert {"lease_owner", "lease_expires_at"} <= columns.keys()
     assert migrated_name == "Evaluation run-1"
+
+
+@pytest.mark.parametrize("existing_definition", [False, True])
+def test_catalog_migration_respects_foreign_keys(tmp_path, existing_definition):
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'catalog-migration.sqlite3'}"
+    backend_root = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_root / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_root / "alembic"))
+    config.set_main_option("sqlalchemy.url", database_url)
+
+    def enable_foreign_keys(connection, _record):
+        connection.execute("PRAGMA foreign_keys=ON")
+
+    event.listen(Engine, "connect", enable_foreign_keys)
+    engine = create_engine(database_url)
+    try:
+        command.upgrade(config, "0002_evaluation_run_leases")
+        if existing_definition:
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "INSERT INTO evaluation_definitions "
+                    "(id, name, kind, dataset_version, default_config_json) "
+                    "VALUES ('medqa', 'MedQA', 'medical-medqa', 'medical-medqa.dev.v1', '{}')"
+                ))
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
+            assert connection.execute(text("SELECT COUNT(*) FROM evaluation_definition_splits")).scalar_one() == int(existing_definition)
+        command.downgrade(config, "0002_evaluation_run_leases")
+        assert "evaluation_definition_splits" not in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+        event.remove(Engine, "connect", enable_foreign_keys)

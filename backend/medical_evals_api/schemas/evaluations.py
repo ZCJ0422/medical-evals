@@ -30,6 +30,8 @@ class EvaluationDefinitionSplitResponse(BaseModel):
     version: str
     sample_count: int
     default_sample_limit: int
+    source_path: str | None = None
+    source_sha256: str | None = None
 
 
 class EvaluationDefinitionResponse(BaseModel):
@@ -68,6 +70,7 @@ class EvaluationRunStatus(str, Enum):
 
 class EvaluationRunResponse(BaseModel):
     run_id: str
+    submitted_by: str | None = None
     name: str
     evaluation_definition_id: str
     target_model_id: str

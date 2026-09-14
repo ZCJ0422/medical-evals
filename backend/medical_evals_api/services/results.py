@@ -9,8 +9,8 @@ class EvaluationSummary:
     dataset_version_id: str
     target_model_id: str
     judge_model_id: str
-    created_at: str
-    updated_at: str
+    created_at: str | None
+    updated_at: str | None
     error: str | None
     stage: str
     progress_percent: float
@@ -24,6 +24,7 @@ class EvaluationSummary:
     completed_count: int
     failed_count: int
     retry_count: int
+    result_version: str = "workbench.result.v1"
 
 
 def _as_public_timestamp(value) -> str | None:
@@ -78,4 +79,5 @@ class ResultService:
             completed,
             failed,
             retries,
+            stored.get("result_version", "workbench.result.v1") if stored else "workbench.result.v1",
         )

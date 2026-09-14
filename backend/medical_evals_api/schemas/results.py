@@ -33,6 +33,7 @@ class EvaluationSummaryResponse(BaseModel):
     completed_count: int
     failed_count: int
     retry_count: int
+    result_version: str = "workbench.result.v1"
 
 
 class EvaluationSamplesResponse(BaseModel):

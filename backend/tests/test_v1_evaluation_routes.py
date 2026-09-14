@@ -137,6 +137,12 @@ def test_v1_list_and_detail_enforce_owner_scope_and_support_status_filter(client
     _set_status(succeeded["run_id"], TaskStatus.COMPLETED)
     _set_status(failed["run_id"], TaskStatus.FAILED)
 
+    assert queued["submitted_by"] == "alice"
+    admin_list = client.get("/api/v1/evaluations", headers=_admin_auth())
+    assert admin_list.status_code == 200
+    admin_runs = {item["run_id"]: item for item in admin_list.json()}
+    assert admin_runs[queued["run_id"]]["submitted_by"] == "alice"
+
     filtered = client.get(
         "/api/v1/evaluations",
         headers=_auth(alice),

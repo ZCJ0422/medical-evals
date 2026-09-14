@@ -309,3 +309,21 @@ def test_worker_run_forever_requeues_expired_leases_via_reconciliation(tmp_path)
         worker.run_forever(queue, repository_factory, idle_seconds=0)
 
     assert queue.reconciled[0] == [expired.task_id, additional.task_id]
+
+
+def test_completed_run_manifest_matches_final_artifacts(tmp_path):
+    import hashlib
+    import json
+
+    repo = TaskRepository(tmp_path / "tasks.sqlite3", tmp_path / "artifacts")
+    task = repo.create(name="Manifest regression", target_model_id="fixture", judge_model_id="", dataset_version_id="medical-medqa.dev.v1", rubric_id="medical-medqa.default", max_samples=1)
+    Worker(repo, adapter=DryRunEvaluationAdapter()).run_task(task.task_id)
+    directory = repo.artifact_root / task.task_id
+    manifest = json.loads((directory / "manifest.json").read_text())
+    entries = {entry["name"]: entry for entry in manifest["files"]}
+    assert {"summary.json", "run.log", "events.jsonl"} <= entries.keys()
+    assert "Run completed" in (directory / "run.log").read_text()
+    for name, entry in entries.items():
+        content = (directory / name).read_bytes()
+        assert entry["size_bytes"] == len(content)
+        assert entry["sha256"] == hashlib.sha256(content).hexdigest()

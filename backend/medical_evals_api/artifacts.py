@@ -1,8 +1,14 @@
+from typing import Any
 import json
+
+from medical_evals.reports import sha256_file
 import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
+
+from .versioning import ARTIFACT_SCHEMA_VERSION, EVENT_SCHEMA_VERSION
 
 
 def artifact_root_for_database(database_path: Path, configured_root: Path | None = None) -> Path:
@@ -18,9 +24,52 @@ class ArtifactWriter:
         self.log_path = self.directory / "run.log"
         self.summary_path = self.directory / "summary.json"
         self.metadata_path = self.directory / "metadata.json"
+        self.events_path = self.directory / "events.jsonl"
+        self.manifest_path = self.directory / "manifest.json"
         self._sample_indexes_are_strictly_increasing = True
         self._last_sample_index: int | None = None
         self._initialize_sample_index_state()
+
+    def event(self, event_type: str, message: str, *, stage: str | None = None, details: dict | None = None) -> None:
+        event: dict[str, Any] = {
+            "schema_version": EVENT_SCHEMA_VERSION,
+            "event_id": str(uuid4()),
+            "event_type": event_type,
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "message": message.rstrip(),
+        }
+        if stage:
+            event["stage"] = stage
+        if details:
+            event["details"] = details
+        with self.events_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+            handle.flush()
+
+    def write_manifest(self) -> None:
+        files = []
+        for path in sorted(self.directory.iterdir()):
+            if not path.is_file() or path.name == self.manifest_path.name:
+                continue
+            digest = sha256_file(path)
+            files.append({"name": path.name, "size_bytes": path.stat().st_size, "sha256": digest})
+        self.manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": ARTIFACT_SCHEMA_VERSION,
+                    "run_id": self.directory.name,
+                    "files": files,
+                    "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def finalize(self) -> None:
+        self.write_manifest()
 
     def append_sample(self, record: dict) -> None:
         with self.samples_path.open("a", encoding="utf-8") as handle:
@@ -161,9 +210,11 @@ class ArtifactWriter:
             timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
             handle.write(f"[{timestamp}] {message.rstrip()}\n")
             handle.flush()
+        self.event("log", message)
 
     def write_summary(self, summary: dict) -> None:
-        self.summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        payload = {"schema_version": "workbench.summary.v2", **summary}
+        self.summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     def write_metadata(self, metadata: dict) -> None:
         """Write reproducibility metadata without credentials or raw secrets."""

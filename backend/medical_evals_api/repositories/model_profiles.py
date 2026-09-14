@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -92,7 +94,7 @@ class ModelProfileRepository:
         model_name: str | None = None,
         api_key_encrypted: str | None = None,
     ) -> ModelProfile | None:
-        values = {"updated_at": _utcnow()}
+        values: dict[str, Any] = {"updated_at": _utcnow()}
         if name is not None:
             values["name"] = name
         if base_url is not None:
